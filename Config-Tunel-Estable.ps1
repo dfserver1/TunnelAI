@@ -43,7 +43,11 @@ if (-not $cf) {
     if (Test-Path -LiteralPath $c) { $env:PATH = "$(Split-Path -Parent $c);$env:PATH"; $cf = Get-Item $c; break }
   }
 }
-if (-not $cf) { Write-Err2 "cloudflared not found. Run any Iniciar-*.cmd first (it downloads it automatically)."; Read-Host "Press Enter"; exit 1 }
+if (-not $cf) {
+  # in dry-run mode we only report; a real run needs cloudflared
+  if ($Plan) { Write-Warn "cloudflared not found (dry run continues; a real run needs it)" }
+  else { Write-Err2 "cloudflared not found. Run any Iniciar-*.cmd first (it downloads it automatically)."; Read-Host "Press Enter"; exit 1 }
+}
 
 $cert = Join-Path $env:USERPROFILE '.cloudflared\cert.pem'
 $loginOk = Test-Path -LiteralPath $cert
