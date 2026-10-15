@@ -1,10 +1,22 @@
 # TunnelAI — portable AI-to-PC bridge (MCP over Cloudflare tunnel)
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11-0078D6?style=flat-square&logo=windows" alt="Windows 10/11">
+  <img src="https://img.shields.io/badge/powershell-5.1%20%7C%207-012456?style=flat-square&logo=powershell" alt="PowerShell 5.1 | 7">
+  <img src="https://img.shields.io/badge/node-18%2B-339933?style=flat-square&logo=node.js" alt="Node 18+">
+  <img src="https://img.shields.io/badge/MCP-compatible-8A2BE2?style=flat-square" alt="MCP compatible">
+  <img src="https://img.shields.io/badge/skills-15-orange?style=flat-square" alt="15 skills">
+  <img src="https://img.shields.io/badge/CI-validate-brightgreen?style=flat-square&logo=githubactions" alt="CI">
+</p>
+
 A **portable, OneDrive-friendly folder** that connects **ChatGPT, Claude, Gemini (web & mobile) and Google Antigravity** to your Windows PC through MCP (Model Context Protocol) — with or without a public tunnel.
 
 Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and hands you a URL to paste into your AI assistant. Optionally, the AI becomes a **code auditor, web developer, OCR reader, security reviewer or documentation writer** with 15 ready-to-use skills.
 
-**License: MIT** — see [LICENSE](LICENSE).
+**License: MIT** — see [LICENSE](LICENSE) · Copyright (c) 2026 Omar Pajares.
+
+> ⭐ **If this saves you time, star the repo** — it helps others find it.
 
 ## Why this is more than "let the AI read my files"
 
@@ -13,6 +25,34 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 - **Self-healing sentinel**: probes the MCP server every 20 s, detects crashes, bottlenecks and *installations in progress*, and repairs **without killing the tunnel or your processes**.
 - **Stable URL option**: named Cloudflare tunnel (your domain) so the URL never changes.
 - **Security first**: folder-scoped, server bound to `127.0.0.1`, optional Bearer token, cleanup that never kills global node/dotnet processes.
+
+### Why not just copy files into the chat?
+
+| | Copy-paste | TunnelAI |
+|---|---|---|
+| 500-file projects | ❌ | ✅ whole folder, folder-scoped |
+| Run builds / tests / installs | ❌ | ✅ terminal with 40 s-safe timeouts |
+| Re-read after each change | ❌ | ✅ the AI sees the live state |
+| OCR scans & PDFs | ❌ | ✅ offline Windows OCR + local PDF export |
+| Works on mobile (Gemini) | ❌ | ✅ tunneled from the phone |
+| Nothing leaves the machine | — | ✅ local mode (Antigravity) + `127.0.0.1` |
+
+## Tech stack & languages
+
+| Layer | Technology |
+|---|---|
+| Automation / launchers / tools | **PowerShell** (`.ps1`, Windows PowerShell 5.1 + 7+, Win32/WinRT: `Get-CimInstance`, `Windows.Media.Ocr`, `TcpListener`) |
+| Windows entry points | **Batch** (`.cmd` wrappers, double-click ready) |
+| MCP servers (upstream) | **Node.js / JavaScript** — `chatgpt-local-mcp`, `expose-files-mcp` (npm, ESM), patched at runtime by TunnelAI |
+| Tunnel | **cloudflared** (Go binary) — quick tunnels or named tunnels via `config.yml` |
+| Protocol | **MCP** (Model Context Protocol) over Streamable HTTP (`/mcp`) |
+| OCR engine | **WinRT** (`Windows.Media.Ocr`) — offline, no cloud API |
+| PDF export | **Edge/Chrome headless** (`--print-to-pdf`) |
+| Diagrams | **Mermaid** (`flowchart`, `sequenceDiagram`, `classDiagram`) — rendered by GitHub/GitLab |
+| Config & manifests | **JSON** (`mcp_config.json`), **Markdown** (15 skills + docs) |
+| Reports & templates | **HTML + CSS** (self-contained, print-oriented) |
+| CI | **GitHub Actions** (PowerShell syntax + skills + tool smoke tests) |
+| Requirements | Windows 10/11 · Node 18+ · git (only for forks) |
 
 ## What's inside
 
@@ -209,4 +249,6 @@ never commit it, and prefer `gh auth login` (`winget install GitHub.cli`) when p
 ## License
 
 **MIT** — free to use, modify and distribute, including commercially, without warranty.
-See [LICENSE](LICENSE). Copyright (c) 2026 Omar.
+Copyright (c) 2026 **Omar Pajares**. See [LICENSE](LICENSE).
+
+## Publishing your own fork (optional)
