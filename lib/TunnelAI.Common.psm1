@@ -975,13 +975,29 @@ function Start-TunnelAiSshSession {
   # a Cloudflare session on the same port would block us: explain and offer to free it
   if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 3) {
     $urlActiva = Get-TunnelUrlActual
-    Write-Warn "A session is already active on port $Puerto."
-    if ($urlActiva -and $urlActiva -match 'trycloudflare') {
-      Write-Info "That session uses Cloudflare, which cannot stream SSE (Gemini needs it)."
-      Write-Info "Close the other TunnelAI window (or run Limpiar-Bloqueo.cmd) and start this one again."
-    } else {
-      Write-Info "Another SSH session is already running on this port. Close it and try again."
+    Write-Warn "A session is already active on port $Puerto. Not starting a second one."
+    $urlVivaSsh = $null
+    $logSshPrev = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
+    if (Test-Path -LiteralPath $logSshPrev) {
+      $mm = Select-String -LiteralPath $logSshPrev -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' -AllMatches |
+           ForEach-Object { $_.Matches } |
+           Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
+      if ($mm) { $urlVivaSsh = "$($mm.Value)/mcp" }
     }
+    if (-not $urlVivaSsh) { $urlVivaSsh = Get-TunnelUrlActual }
+    if ($urlVivaSsh) {
+      Write-Host ""
+      if ($urlVivaSsh -match 'trycloudflare') {
+        Write-Warn "That session uses Cloudflare, which cannot stream SSE (Gemini needs it)."
+      }
+      Write-Ok "That session is live, use its URL: $urlVivaSsh"
+      Copy-TunnelAiUrl -Url $urlVivaSsh
+      Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlVivaSsh
+    } else {
+      Write-Info "I could not recover its URL from the logs. Close the other TunnelAI window."
+    }
+    Write-Info "To start a fresh session: run Limpiar-Bloqueo.cmd first."
+    Read-Host "Press Enter to close this window" | Out-Null
     return
   }
 
