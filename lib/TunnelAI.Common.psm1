@@ -812,12 +812,23 @@ function Start-TunnelAiSession {
       return
     }
     $otro = if ($Puerto -eq 3001) { 'ChatGPT/Gemini' } else { 'another client' }
-    Write-Warn "A tunnel session is already active on port $Puerto ($otro)."
-    if ($Cliente -eq 'Gemini') {
-      Write-Info "Gemini and ChatGPT share the tunnel: use the SAME URL shown by the ChatGPT tunnel window."
-    } else {
-      Write-Info "Close that session or reuse its URL. To free the port: Limpiar-Bloqueo.cmd"
+    Write-Warn "A tunnel session is already running on port $Puerto ($otro). Not starting a second one."
+    $urlViva = $null
+    $logSsh = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
+    if (Test-Path -LiteralPath $logSsh) {
+      $mm = Select-String -LiteralPath $logSsh -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' -AllMatches |
+           ForEach-Object { $_.Matches } |
+           Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
+      if ($mm) { $urlViva = "$($mm.Value)/mcp" }
     }
+    if (-not $urlViva) { $urlViva = Get-TunnelUrlActual }
+    if ($urlViva) {
+      Write-Host ""
+      Write-Ok "That session is live, use its URL: $urlViva"
+      Copy-TunnelAiUrl -Url $urlViva
+      Show-TunnelAiInstrucciones -Cliente $Cliente -Url $urlViva
+    }
+    Write-Info "To start a fresh session: close that window, or run Limpiar-Bloqueo.cmd (frees the port)."
     return
   }
 
