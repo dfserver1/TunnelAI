@@ -3,6 +3,30 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.2.0] — 2026-10-15
+
+### Added
+- **OAuth 2.1 for Gemini web**: the patched server now answers the full MCP authorization flow, so
+  *Connect* finally completes instead of timing out after ~10 s with `context canceled`:
+  `/.well-known/oauth-protected-resource` (RFC 9728), `/.well-known/oauth-authorization-server` (RFC 8414),
+  dynamic client registration `POST /register` (RFC 7591), a consent page at `/authorize`, and
+  `POST /token` with **PKCE (S256)** verification. Any `Client ID` / `Client Secret` you type in Gemini
+  works (e.g. `tunnelai` / `tunnelai`). Issued tokens are accepted by `/mcp` **alongside** a static
+  Bearer token, so `-Token` sessions keep working and still reject anything else with 401.
+- `Test-Conector-Gemini.ps1` now verifies the whole OAuth handshake (discovery → registration →
+  consent → token → `tools/list`), not just `initialize`.
+
+### Fixed
+- **Sentinel false alarms**: `Invoke-WebRequest` was called with a non-existent `-TimeoutSeg` parameter,
+  so every probe threw and the sentinel restarted the server every 40 s. In ~20 minutes that produced
+  **96 orphaned processes** (dead `EADDRINUSE` servers + extra `cloudflared`).
+- **Sentinel recovery** now kills the old server (port owner + watchdog/launcher) *before* relaunching,
+  waits for the port to be free, and suspends auto-recovery after 3 consecutive failures instead of
+  looping forever. The tunnel and its URL are still never touched.
+- Patch installer: the OAuth block is inserted **by line** before `app.listen(...)`, and an invariant
+  guarantees `const server = app.listen(` survives (a broken earlier insertion had eaten the prefix,
+  making the server exit with `ReferenceError: server is not defined`).
+
 ## [1.1.0] — 2026-10-15
 
 ### Added

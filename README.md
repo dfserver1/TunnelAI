@@ -111,7 +111,12 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 ### Gemini (gemini.google.com)
 1. Double-click `Iniciar-Gemini.cmd` → paste the folder → Enter
 2. In Gemini: `Settings → Connected Apps → Custom apps → Add a custom app` → paste the URL
-3. Requirements: **personal** Google account (not Workspace/school), **Keep Activity** on, US region.
+3. If it asks for credentials: `Client ID: tunnelai` · `Client Secret: tunnelai` (any value works)
+4. Gemini registers itself (OAuth 2.1 + PKCE) and you get a consent page — *TunnelAI authorizes access* → **I understand**
+5. Requirements: **personal** Google account (not Workspace/school), **Keep Activity** on, US region.
+
+Run `Test-Conector-Gemini.cmd` at any time: it verifies the MCP handshake **and** the whole OAuth flow
+(discovery → registration → consent → token → 53 tools), so you can tell our side from Google's.
 
 > ChatGPT and Gemini can share the same URL at the same time — the launcher detects an active session on port 3001 and reuses it.
 

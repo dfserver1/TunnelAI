@@ -69,8 +69,93 @@ try {
 }
 
 Write-Host ""
-if ($okInit -and $okTools) {
-  Write-Ok "RESULT: the tunnel is Gemini-ready. The blocker is on Google's side (see the checklist)."
+
+# ── OAuth 2.1 handshake: exactly what Gemini performs when you click "Connect" ──
+Write-Host ""
+Write-Host "── OAuth 2.1 handshake (the flow Gemini runs internally) ──" -ForegroundColor Cyan
+$Base = ($Url -replace '/mcp/?$', '').TrimEnd('/')
+$curlOk = [bool](Get-Command curl.exe -ErrorAction SilentlyContinue)
+$okOAuth = $false
+
+if (-not $curlOk) {
+  Write-Warn "curl.exe not found — skipping the redirect steps (discovery is still checked)."
+}
+
+function Curl([string[]]$CurlArgs) { ((& curl.exe -s -i --max-time 30 @CurlArgs 2>&1) -join "`n") }
+function Partir([string]$Raw) {
+  $i = $Raw.IndexOf("`n`n")
+  if ($i -lt 0) { return @{ Head = $Raw; Body = '' } }
+  return @{ Head = $Raw.Substring(0, $i); Body = $Raw.Substring($i + 2) }
+}
+function Codigo([string]$Head) { if ($Head -match 'HTTP/\S+\s+(\d{3})') { return [int]$Matches[1] }; 0 }
+function Campo([string]$Body, [string]$Nombre) { if ($Body -match ('"' + $Nombre + '"\s*:\s*"([^"]+)"')) { return $Matches[1] }; $null }
+
+# 1 + 2: discovery
+$r = Partir (Curl @("$Base/.well-known/oauth-protected-resource"))
+if ((Codigo $r.Head) -eq 200 -and $r.Body -match '"authorization_servers"') {
+  Write-Ok "protected-resource    -> 200 (RFC 9728)"
+  $r2 = Partir (Curl @("$Base/.well-known/oauth-authorization-server"))
+  if ((Codigo $r2.Head) -eq 200 -and $r2.Body -match '"registration_endpoint"') {
+    Write-Ok "authorization-server  -> 200 with /register, /authorize, /token"
+  } else {
+    Write-Err2 "authorization-server  -> $(Codigo $r2.Head) (OAuth metadata missing)"
+  }
+} else {
+  Write-Err2 "protected-resource    -> $(Codigo $r.Head) (Gemini will refuse to connect)"
+}
+
+if ($curlOk) {
+  # 3: dynamic client registration
+  $regJson = '{"client_name":"gemini-web","redirect_uris":["https://gemini.google.com/auth/callback"],"grant_types":["authorization_code"],"response_types":["code"],"token_endpoint_auth_method":"client_secret_post"}'
+  $r = Partir (Curl @('-X','POST','-H','Content-Type: application/json','-d',$regJson,"$Base/register"))
+  $clientId = Campo $r.Body 'client_id'
+  $clientSecret = Campo $r.Body 'client_secret'
+  if ($clientId) { Write-Ok "register (DCR)         -> $(Codigo $r.Head) client_id=$clientId" }
+  else { Write-Err2 "register (DCR)         -> $(Codigo $r.Head) (no client_id)" }
+
+  if ($clientId) {
+    # PKCE pair
+    $verifier  = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))).TrimEnd('=').Replace('+','-').Replace('/','_')
+    $challenge = [Convert]::ToBase64String([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::ASCII.GetBytes($verifier))).TrimEnd('=').Replace('+','-').Replace('/','_')
+    $redirect  = 'https://gemini.google.com/auth/callback'
+    $state     = 'st-' + [guid]::NewGuid().ToString('N').Substring(0, 10)
+
+    # 4: consent screen
+    $authUrl = "$Base/authorize?response_type=code&client_id=$([uri]::EscapeDataString($clientId))&redirect_uri=$([uri]::EscapeDataString($redirect))&scope=mcp&state=$state&code_challenge=$challenge&code_challenge_method=S256"
+    $r = Partir (Curl @($authUrl))
+    if ($r.Body -match 'I understand') { Write-Ok "authorize (consent)    -> 200 with the consent screen" }
+    else { Write-Err2 "authorize (consent)    -> $(Codigo $r.Head) (no consent screen)" }
+
+    # 5: user consents -> 302 with the code
+    $form = "response_type=code&client_id=$([uri]::EscapeDataString($clientId))&redirect_uri=$([uri]::EscapeDataString($redirect))&scope=mcp&state=$state&code_challenge=$challenge&code_challenge_method=S256"
+    $r = Partir (Curl @('-X','POST','-H','Content-Type: application/x-www-form-urlencoded','-d',$form,"$Base/authorize"))
+    $code = $null
+    if ($r.Head -match '(?im)^Location:\s*(\S+)') {
+      if ($Matches[1] -match 'code=([^&]+)') { $code = [uri]::UnescapeDataString($Matches[1]) }
+      Write-Ok "POST /authorize        -> $(Codigo $r.Head) with code + state"
+    } else { Write-Err2 "POST /authorize        -> $(Codigo $r.Head) without redirect" }
+
+    # 6: token exchange
+    if ($code) {
+      $tokForm = "grant_type=authorization_code&code=$([uri]::EscapeDataString($code))&redirect_uri=$([uri]::EscapeDataString($redirect))&client_id=$([uri]::EscapeDataString($clientId))&code_verifier=$verifier"
+      if ($clientSecret) { $tokForm += "&client_secret=$([uri]::EscapeDataString($clientSecret))" }
+      $r = Partir (Curl @('-X','POST','-H','Content-Type: application/x-www-form-urlencoded','-d',$tokForm,"$Base/token"))
+      $token = Campo $r.Body 'access_token'
+      if ($token) {
+        Write-Ok "POST /token            -> 200 access_token issued"
+        # 7: MCP call with that token (what Gemini does after connecting)
+        $rh = @('-X','POST','-H','Content-Type: application/json','-H','Accept: application/json, text/event-stream','-H',"Authorization: Bearer $token",'-d',$init,"$Base/mcp")
+        $r = Partir (Curl @($rh))
+        if ((Codigo $r.Head) -eq 200 -and $r.Body -match 'protocolVersion') {
+          Write-Ok "initialize (Bearer)    -> 200 — Gemini can use the tools"
+          $okOAuth = $true
+        } else { Write-Err2 "initialize (Bearer)    -> $(Codigo $r.Head)" }
+      } else { Write-Err2 "POST /token            -> $(Codigo $r.Head) $($r.Body)" }
+    }
+  }
+}
+if ($okInit -and $okTools -and $okOAuth) {
+  Write-Ok "RESULT: the tunnel is Gemini-ready (MCP + OAuth 2.1). If Google still refuses, the blocker is on their side (see the checklist)."
 } else {
   Write-Err2 "RESULT: the tunnel does NOT answer like Gemini expects. Check that the session is still open."
 }

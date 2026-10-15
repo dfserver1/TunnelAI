@@ -60,7 +60,7 @@ function Measure-McpLatencia {
   try {
     $r = Invoke-WebRequest -Uri "http://127.0.0.1:${Puerto}/mcp" -Method Post -Body $body `
       -ContentType 'application/json' -Headers $headers `
-      -UseBasicParsing -TimeoutSeg $TimeoutSeg
+      -UseBasicParsing -TimeoutSec $TimeoutSeg
     $sw.Stop()
     if ("$($r.Content)" -match '"protocolVersion"') { return @{ Ok=$true; Ms=[int]$sw.ElapsedMilliseconds } }
   } catch {
@@ -144,6 +144,7 @@ $urlPendiente = $null
 $caidos = 0
 $ciclo = 0
 $reparaciones = 0
+$fallosSeguidos = 0
 $script:AnunciadosInstalacion = @{}
 
 # ── self-test: validates the detection logic without starting the loop ─────────
@@ -238,11 +239,40 @@ try {
     } else {
       $caidos++
       Write-Warn "MCP not responding (cycle $caidos/2)"
-      if ($AutoRecuperar -and $caidos -ge 2) {
+      if ($AutoRecuperar -and -not $script:AutoRecuperarSuspendido -and $caidos -ge 2) {
         $root = Get-RutaRecordada
         $cf = Get-CloudflaredPuerto -Puerto $Puerto
         $conTunel = (-not $cf)
         Write-Warn "Restarting ONLY the server (tunnel $(if ($conTunel) { 'also down: a new one will be created' } else { 'and URL preserved' }))..."
+        # CRITICAL: kill the old server (and its watchdog/launcher) BEFORE relaunching,
+        # otherwise the new instance dies with EADDRINUSE and the watchdog revives the old one.
+        $patron = if ($Servidor -eq 'chatgpt-local-mcp') { 'chatgpt-local-mcp' } else { 'expose-files-mcp' }
+        $victimas = @()
+        $victimas += @(Get-PortOwnerPids -Puerto $Puerto)
+        try {
+          $victimas += @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -match $patron } |
+            Select-Object -ExpandProperty ProcessId)
+        } catch {}
+        foreach ($v in ($victimas | Select-Object -Unique)) {
+          try { Stop-Process -Id $v -Force -ErrorAction SilentlyContinue } catch {}
+        }
+        $libre = $false
+        for ($w = 0; $w -lt 6; $w++) {
+          Start-Sleep -Seconds 1
+          if (@(Get-PortOwnerPids -Puerto $Puerto).Count -eq 0) { $libre = $true; break }
+        }
+        if (-not $libre) {
+          Write-Err2 "Port $Puerto is still busy after killing the server - not relaunching (avoiding EADDRINUSE loop)."
+          $fallosSeguidos++
+          if ($fallosSeguidos -ge 3) {
+            Write-Warn "3 consecutive failures: pausing auto-recovery for this session (check manually with Limpiar-Bloqueo.cmd)."
+            $script:AutoRecuperarSuspendido = $true
+          }
+          $caidos = 0
+          continue
+        }
+        $fallosSeguidos = 0
         try {
           $out = Join-Path $env:TEMP "tunnelai-vigia-$Puerto.out"
           if ($Servidor -eq 'chatgpt-local-mcp') {

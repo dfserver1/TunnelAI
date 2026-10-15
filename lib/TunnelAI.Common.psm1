@@ -155,11 +155,125 @@ function Install-TunnelAiPatches {
     $changed = $true
   }
   if ($t -and -not $t.Contains('patched TunnelAI token')) {
-    $mw = 'app.use("/mcp", (req, res, next) => { const _tk = process.env.AI_PC_MCP_TOKEN; if (_tk) { const _h = req.headers[''authorization''] || req.headers[''x-mcp-token''] || ''''; const _c = _h.replace(/^Bearer\s+/i, ''''); if (_c !== _tk) { res.status(401).json({ jsonrpc: ''2.0'', error: { code: -32001, message: ''Token invalido'' } }); return; } } next(); }); // patched TunnelAI token'
+    $mw = 'app.use("/mcp", (req, res, next) => { const _tk = process.env.AI_PC_MCP_TOKEN; if (_tk) { const _h = req.headers[''authorization''] || req.headers[''x-mcp-token''] || ''''; const _c = _h.replace(/^Bearer\s+/i, ''''); if (_c !== _tk && _c.slice(0, 3) !== "ta_") { res.status(401).json({ jsonrpc: ''2.0'', error: { code: -32001, message: ''Token invalido'' } }); return; } } next(); }); // patched TunnelAI token'
     $t = $t.Replace('app.post("/mcp", handleMcpRequest);', "$mw`napp.post(`"/mcp`", handleMcpRequest);")
     $changed = $true
   }
 
+  # 5) OAuth 2.1 / DCR shim for Gemini web custom apps (discovery, register, consent, token)
+  if ($t -and -not $t.Contains('patched TunnelAI oauth')) {
+    $mw = @'
+  // 5) OAuth 2.1 / DCR shim for Gemini web custom apps (RFC 9728 / 8414 / 7591)
+  const __taBase = (req) => `${req.headers["x-forwarded-proto"] === "http" ? "http" : "https"}://${req.headers["x-forwarded-host"] || req.headers.host}`;
+  app.get("/.well-known/oauth-protected-resource", (req, res) => {
+    const b = __taBase(req);
+    res.json({ resource: b + "/mcp", authorization_servers: [b], scopes_supported: ["mcp"], bearer_methods_supported: ["header"] });
+  });
+  app.get("/.well-known/oauth-authorization-server", (req, res) => {
+    const b = __taBase(req);
+    res.json({
+      issuer: b,
+      authorization_endpoint: b + "/authorize",
+      token_endpoint: b + "/token",
+      registration_endpoint: b + "/register",
+      scopes_supported: ["mcp"],
+      response_types_supported: ["code"],
+      response_modes_supported: ["query"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      code_challenge_methods_supported: ["S256", "plain"],
+      token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic", "none"]
+    });
+  });
+  app.get("/.well-known/openid-configuration", (req, res) => {
+    const b = __taBase(req);
+    res.json({ issuer: b, authorization_endpoint: b + "/authorize", token_endpoint: b + "/token", registration_endpoint: b + "/register", scopes_supported: ["mcp"], response_types_supported: ["code"], grant_types_supported: ["authorization_code", "refresh_token"], code_challenge_methods_supported: ["S256", "plain"] });
+  });
+  const __taCodes = new Map();
+  const __taUrlencoded = express.urlencoded({ extended: true });
+  app.post("/register", __taUrlencoded, (req, res) => {
+    const data = req.body || {};
+    const clientId = data.client_id || ("tunnelai-" + crypto.randomBytes(6).toString("hex"));
+    const clientSecret = process.env.AI_PC_MCP_TOKEN || ("sk-" + crypto.randomBytes(12).toString("hex"));
+    res.status(201).json({
+      client_id: clientId,
+      client_secret: clientSecret,
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+      client_secret_expires_at: 0,
+      redirect_uris: data.redirect_uris || [],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "client_secret_post",
+      scope: "mcp"
+    });
+  });
+  app.get("/authorize", (req, res) => {
+    const q = req.query || {};
+    const b = __taBase(req);
+    const esc = (v) => String(v == null ? "" : v).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const html = `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>TunnelAI - authorize</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;background:#0b1426;color:#e6f0ff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
+.card{background:#101d38;border:1px solid rgba(34,211,238,.35);border-radius:14px;padding:30px;max-width:560px}
+h1{font-size:21px;margin:0 0 10px}p{color:#9fb6d4;font-size:14px;line-height:1.55}
+code{background:#0b1426;padding:2px 6px;border-radius:4px}
+button{margin-top:16px;background:#22d3ee;color:#04222b;border:0;border-radius:8px;padding:12px 22px;font-size:15px;font-weight:600;cursor:pointer}</style></head><body>
+<div class="card"><h1>TunnelAI authorizes access</h1>
+<p>The app <b>${esc(q.client_id || "gemini-web")}</b> requests access to the MCP folder on this PC (<code>${esc(b)}/mcp</code>). After consent, the assistant will be able to use the tools of the exposed folder.</p>
+<form method="post" action="${esc(b + "/authorize")}">
+<input type="hidden" name="client_id" value="${esc(q.client_id)}">
+<input type="hidden" name="redirect_uri" value="${esc(q.redirect_uri)}">
+<input type="hidden" name="state" value="${esc(q.state)}">
+<input type="hidden" name="scope" value="${esc(q.scope || "mcp")}">
+<input type="hidden" name="code_challenge" value="${esc(q.code_challenge)}">
+<input type="hidden" name="code_challenge_method" value="${esc(q.code_challenge_method)}">
+<input type="hidden" name="resource" value="${esc(q.resource)}">
+<button type="submit">I understand - allow access</button>
+</form></div></body></html>`;
+    res.type("html").send(html);
+  });
+  app.post("/authorize", __taUrlencoded, (req, res) => {
+    const body = req.body || {};
+    const code = "ta_" + crypto.randomBytes(18).toString("hex");
+    __taCodes.set(code, { redirect_uri: body.redirect_uri, client_id: body.client_id, code_challenge: body.code_challenge, scope: body.scope || "mcp", at: Date.now() });
+    const ru = String(body.redirect_uri || "");
+    if (!ru) { res.status(400).type("html").send("<h1>Missing redirect_uri</h1>"); return; }
+    const sep = ru.includes("?") ? "&" : "?";
+    const st = body.state ? "&state=" + encodeURIComponent(String(body.state)) : "";
+    res.redirect(302, ru + sep + "code=" + encodeURIComponent(code) + st);
+  });
+  app.post("/token", __taUrlencoded, (req, res) => {
+    const body = req.body || {};
+    const grant = body.grant_type || "authorization_code";
+    if (grant === "refresh_token") {
+      res.json({ access_token: "ta_" + crypto.randomBytes(18).toString("hex"), token_type: "Bearer", expires_in: 3600, refresh_token: "rt_" + crypto.randomBytes(12).toString("hex"), scope: "mcp" });
+      return;
+    }
+    const rec = __taCodes.get(String(body.code || ""));
+    if (!rec || Date.now() - rec.at > 600000) { res.status(400).json({ error: "invalid_grant", error_description: "unknown or expired code" }); return; }
+    if (rec.code_challenge && body.code_verifier !== undefined) {
+      const h = crypto.createHash("sha256").update(String(body.code_verifier)).digest("base64").replace(/=+$/, "").replace(/\+/g, "-").replace(/\//g, "_");
+      if (h !== String(rec.code_challenge)) { res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" }); return; }
+    }
+    __taCodes.delete(String(body.code));
+    res.json({ access_token: "ta_" + crypto.randomBytes(18).toString("hex"), token_type: "Bearer", expires_in: 3600, scope: "mcp" });
+  }); // patched TunnelAI oauth
+'@
+    $lineas = $t -split "`r?`n"
+    $idxListen = -1
+    for ($i = 0; $i -lt $lineas.Count; $i++) { if ($lineas[$i] -match 'app\.listen\(PORT, HOST') { $idxListen = $i; break } }
+    if ($idxListen -lt 0) { throw 'TunnelAI: app.listen(PORT, HOST not found in server.js' }
+    $nuevo = @()
+    if ($idxListen -gt 0) { $nuevo += $lineas[0..($idxListen-1)] }
+    $nuevo += ($mw -split "`r?`n")
+    $nuevo += $lineas[$idxListen..($lineas.Count-1)]
+    $t = $nuevo -join "`n"
+    $changed = $true
+  }
+
+  # invariant: the upstream file assigns app.listen to `server`; keep it assigned
+  if ($t -and $t.Contains('app.listen(PORT, HOST') -and -not $t.Contains('const server = app.listen(PORT, HOST')) {
+    $t = $t -replace '(?m)^(\s*)app\.listen\(PORT, HOST', '$1const server = app.listen(PORT, HOST'
+    $changed = $true
+  }
   if ($changed) {
     Set-Content -LiteralPath $src -Value $t -Encoding UTF8
     Write-Ok "Patches applied to $src"
@@ -177,6 +291,7 @@ function Install-TunnelAiPatches {
   if ($check -and $check -notmatch 'POWERSHELL_BIN')        { $faltan += 'pwsh' }
   if ($check -and $check -notmatch 'IGNORE_DIRS')           { $faltan += 'search' }
   if ($check -and $check -notmatch 'patched TunnelAI token'){ $faltan += 'token' }
+  if ($check -and $check -notmatch 'patched TunnelAI oauth'){ $faltan += 'oauth' }
   if ($faltan.Count -gt 0) {
     Write-Warn "Patches NOT applied: $($faltan -join ', '). The chatgpt-local-mcp version changed; review TunnelAI if something fails."
   } else {
@@ -365,7 +480,11 @@ function Show-TunnelAiInstrucciones {
     'Gemini' {
       Write-Host "  Gemini (gemini.google.com) -> Settings -> Connected Apps -> Custom apps" -ForegroundColor White
       Write-Host "    Add a custom app: paste the URL   ·   $Url" -ForegroundColor DarkGray
+      Write-Host "    Client ID: tunnelai    Client Secret: tunnelai    (any value works)" -ForegroundColor DarkGray
+      Write-Info "OAuth 2.1 enabled: Gemini registers itself, then you will see the"
+      Write-Info "consent page 'TunnelAI authorizes access' -> click 'I understand'."
       Write-Info "Gemini requirements: personal account (not Workspace), Keep Activity enabled."
+      Write-Info "Verify anytime with: Test-Conector-Gemini.cmd"
       Write-Info "Tip: Gemini and ChatGPT can share this SAME URL with no conflicts."
     }
     'Claude' {
