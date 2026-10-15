@@ -1,0 +1,13 @@
+# TunnelAI — .gitignore (carpeta portable)
+# Binario grande: se descarga solo si falta (los lanzadores lo bajan)
+bin/cloudflared.exe
+# Estado local, nunca compartir
+.ultima_ruta.out
+*.log
+logs/
+# SO / editores
+Thumbs.db
+desktop.ini
+.DS_Store
+# Node (por si alguien ejecuta herramientas locales aquí)
+node_modules/
