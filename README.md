@@ -10,6 +10,21 @@
   <img src="https://img.shields.io/badge/CI-validate-brightgreen?style=flat-square&logo=githubactions" alt="CI">
 </p>
 
+<p align="center">
+  <img src="assets/banner.svg" alt="TunnelAI — portable AI-to-PC bridge" width="820">
+</p>
+
+## See it in action
+
+Video coming soon — [demo script (60 s, ready to record)](docs/DEMO-SCRIPT.md) is included so you can
+make your own in one take (Win + Alt + R on Windows).
+
+```powershell
+Verificar-Entorno.cmd   # 1. diagnose
+Iniciar-TunnelAI.cmd    # 2. paste a folder -> URL to clipboard
+Agregar-Skill.cmd todas # 3. install the 15 skills -> ask for the audit
+```
+
 A **portable, OneDrive-friendly folder** that connects **ChatGPT, Claude, Gemini (web & mobile) and Google Antigravity** to your Windows PC through MCP (Model Context Protocol) — with or without a public tunnel.
 
 Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and hands you a URL to paste into your AI assistant. Optionally, the AI becomes a **code auditor, web developer, OCR reader, security reviewer or documentation writer** with 15 ready-to-use skills.
