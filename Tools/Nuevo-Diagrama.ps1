@@ -116,8 +116,8 @@ $fence6 = $bt * 6
 if ($Validar) {
   if (-not $Ruta -or -not (Test-Path -LiteralPath $Ruta)) { Write-Error "Provide -Ruta <file.mmd or .md> to validate"; exit 2 }
   $txt = Get-Content -LiteralPath $Ruta -Raw
-  # if it's Markdown, extract the ```mermaid blocks
-  $bloques = [regex]::Matches($txt, '(?s)```mermaid(.*?)```')
+  # if it's Markdown, extract the ```mermaid blocks (closing only at line start)
+  $bloques = [regex]::Matches($txt, '(?sm)```mermaid(.*?)^\s*```')
   if ($bloques.Count -gt 0) {
     $n = 0; $fallos = 0
     foreach ($b in $bloques) {
@@ -128,6 +128,11 @@ if ($Validar) {
     }
     Write-Host "$n block(s), $fallos with problems" -ForegroundColor Cyan
     exit $(if ($fallos) { 1 } else { 0 })
+  }
+  # Markdown without Mermaid blocks: there's nothing to validate
+  if ($Ruta -match '\.md$') {
+    Write-Host "No Mermaid blocks found in $([System.IO.Path]::GetFileName($Ruta)) — nothing to validate" -ForegroundColor Cyan
+    exit 0
   }
   $errs = Test-MermaidBasico -Texto $txt
   if ($errs.Count) { Write-Host "✗ $($errs -join '; ')" -ForegroundColor Red; exit 1 }

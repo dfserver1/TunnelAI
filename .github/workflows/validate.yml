@@ -38,6 +38,7 @@ jobs:
       - name: Tools respond to -Plan/smoke flags without touching anything
         shell: pwsh
         run: |
-          pwsh -NoProfile -File Tools/Nuevo-Diagrama.ps1 -Validar -Ruta README.md
+          pwsh -NoProfile -File Tools/Nuevo-Diagrama.ps1 -Tipo capas -Salida "$env:RUNNER_TEMP\arch.md" | Out-Null
+          pwsh -NoProfile -File Tools/Nuevo-Diagrama.ps1 -Validar -Ruta "$env:RUNNER_TEMP\arch.md"
           pwsh -NoProfile -File Config-Tunel-Estable.ps1 -Plan -Hostname "ci.example.com" | Out-Null
           Write-Host "Tools OK"
