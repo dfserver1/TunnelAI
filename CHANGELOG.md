@@ -3,6 +3,26 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.4.0] — 2026-10-15
+
+### Fixed
+- **Plain `GET /mcp` no longer hangs.** It now answers immediately with server info unless the
+  client sends `Accept: text/event-stream`. Connectors that only check "can I reach this URL?"
+  (Google does exactly that) previously waited forever and reported
+  *"The MCP server could not be reached. Check the URL."*
+- Added `Iniciar-Gemini-SSH.cmd` watchdog: probes the public URL every 30 s and rebuilds the
+  tunnel when the local server is healthy but the public one is not.
+
+### Measured and documented (why the other tunnels cannot work for Gemini)
+- Cloudflare quick tunnels buffer SSE and forward the body only when the response ends
+  (2.9 KB local vs 0 bytes through the tunnel).
+- `localhost.run` answers **200 to you and 502 to everyone else**, so Google never reaches it.
+- `serveo.net` serves an HTML warning page instead of the MCP endpoint.
+
+### Added
+- **`Iniciar-Gemini-Remoto.cmd`** — Gemini over **ngrok** (or Tailscale Funnel): providers with a
+  real global network that support streaming. First run asks for the free ngrok authtoken and
+  stores it in the standard ngrok config.
 ## [1.3.0] — 2026-10-15
 
 ### Fixed — the real reason Gemini never connected

@@ -214,7 +214,25 @@ function Install-TunnelAiPatches {
       console.log("[SSE] client disconnected [" + ip + "]");
     });
   };
-  app.get("/mcp", __taSseHandler);
+  // A plain GET /mcp (validators, bots, curl without Accept) must NOT hang: clients that
+  // check "can I reach this URL?" expect the response to END. Google rejects the connector
+  // with "The MCP server could not be reached" when the request never finishes, so we stream
+  // only for real MCP clients (Accept: text/event-stream) and answer JSON instantly otherwise.
+  app.get("/mcp", (req, res) => {
+    const accept = String(req.headers.accept || "");
+    if (accept.indexOf("text/event-stream") === -1) {
+      res.status(200).json({
+        name: SERVER_ID,
+        version: VERSION,
+        mcp: "/mcp",
+        transport: "streamable-http; legacy sse on request",
+        tools: tools.length,
+        hint: "POST JSON-RPC here, or GET with Accept: text/event-stream for the SSE transport",
+      });
+      return;
+    }
+    __taSseHandler(req, res);
+  });
   app.get("/sse", __taSseHandler);
   app.post("/mcp", async (req, res) => {
     const sid = req.query && req.query.sessionId;
@@ -1148,5 +1166,227 @@ function Start-TunnelAiSshSession {
     Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
     Write-Ok "Processes finished cleanly."
   }
+}
+function Start-TunnelAiRemoteSession {
+  <#
+    Gemini session over a RELIABLE streaming tunnel.
+
+    Measured facts (do not re-litigate these):
+    * Gemini web speaks the legacy MCP HTTP+SSE transport: it opens GET /mcp and waits for
+      `event: endpoint`. A plain GET /mcp must ALSO finish fast, or validators give up.
+    * Cloudflare QUICK tunnels buffer streaming responses and only forward them when the
+      response ends (measured: 2.9 KB local vs 0 bytes through the tunnel), so SSE never works.
+    * localhost.run / *.lhr.life answers 200 to the owner but 502 to everyone else (Google,
+      any other network), so Google can never reach it. Measured with external probes.
+    => Use a provider with a real global network AND SSE support: ngrok (free) or
+       Tailscale Funnel (free). Both stream; both need a one-time free account.
+  #>
+  param(
+    [string]$Ruta,
+    [int]$Puerto = 3001,
+    [int]$MaxMinutos = 0,
+    [ValidateSet('ngrok', 'tailscale', 'localhost')]
+    [string]$Proveedor = 'ngrok',
+    [string]$Dominio = ''
+  )
+
+  $tunel = switch ($Proveedor) {
+    'ngrok'     { 'ngrok' }
+    'tailscale' { 'tailscale funnel' }
+    'localhost' { 'ssh' }
+  }
+
+  Write-Host ""
+  Write-Host "TunnelAI - Gemini -> your PC ($Proveedor tunnel, streaming)" -ForegroundColor Cyan
+  if ($Proveedor -eq 'localhost') {
+    Write-Host "Warning: localhost.run answers 502 outside your own network - Google cannot use it." -ForegroundColor Yellow
+  }
+  Write-Host ""
+
+  Assert-TunnelAiNode
+  Assert-ChatGptLocalMcp
+  Install-TunnelAiPatches
+
+  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 3) {
+    $urlViva = Get-TunnelUrlActual
+    Write-Warn "A session is already running on port $Puerto. Not starting a second one."
+    if ($urlViva) {
+      Write-Host ""
+      Write-Ok "That session is live, use its URL: $urlViva"
+      Copy-TunnelAiUrl -Url $urlViva
+      Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlViva
+    }
+    Write-Info "To start a fresh session: run Limpiar-Bloqueo.cmd first."
+    Read-Host "Press Enter to close this window" | Out-Null
+    return
+  }
+
+  $Ruta = Read-TunnelAiRuta -Ruta $Ruta
+  $pidsOcupando = @(Get-TunnelAiPortPids -Puerto $Puerto)
+  if ($pidsOcupando.Count -gt 0) { Stop-TunnelAiPuerto -Puerto $Puerto | Out-Null }
+
+  Write-Host ""
+  Write-Ok "Exposed folder: $Ruta"
+  Write-Info "LOCAL mode on 127.0.0.1:$Puerto (not exposed to your LAN)"
+  if ($MaxMinutos -gt 0) { Write-Info "Auto-close enabled: the tunnel stops after $MaxMinutos minute(s)." }
+  Write-Host ""
+
+  # ── 1) comprobar el cliente del tunel ──
+  $cli = $null
+  $falta = ''
+  if ($Proveedor -eq 'ngrok') {
+    $cli = (Get-Command ngrok.exe -ErrorAction SilentlyContinue).Source
+    if (-not $cli) { $cli = (Get-Command ngrok -ErrorAction SilentlyContinue).Source }
+    if (-not $cli) { $falta = 'ngrok' }
+  } elseif ($Proveedor -eq 'tailscale') {
+    $cli = (Get-Command tailscale.exe -ErrorAction SilentlyContinue).Source
+    if (-not $cli) { $cli = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
+    if (-not $cli) { $falta = 'tailscale' }
+  } else {
+    $cli = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
+    if (-not $cli) { $falta = 'OpenSSH' }
+  }
+  if ($falta) {
+    Write-Err2 "'$falta' is not installed."
+    if ($falta -eq 'ngrok') {
+      Write-Info "Install it (one time): https://ngrok.com/download"
+      Write-Info "Then create a free account, copy your authtoken and run: ngrok config add-authtoken <TOKEN>"
+    } elseif ($falta -eq 'tailscale') {
+      Write-Info "Install Tailscale (one time): https://tailscale.com/download"
+      Write-Info "Log in with your free account and enable Funnel in the admin console."
+    }
+    Read-Host "Press Enter to close this window" | Out-Null
+    return
+  }
+
+  # ── 2) arrancar el tunel ──
+  $tunelLog = Join-Path $env:TEMP "tunnelai-tunel-$Proveedor-$Puerto.log"
+  Remove-Item -LiteralPath $tunelLog -ErrorAction SilentlyContinue
+
+  $argsTunel = switch ($Proveedor) {
+    'ngrok' {
+      $a = @('http', "$Puerto", '--log', 'stdout', '--log-format', 'logfmt')
+      if ($Dominio) { $a += @('--domain', $Dominio) }
+      $a
+    }
+    'tailscale' { @('funnel', '--bg=false', "$Puerto") }
+    'localhost' { @('-o', 'StrictHostKeyChecking=no', '-R', "80:127.0.0.1:$Puerto", 'nokey@localhost.run') }
+  }
+
+  Write-Info "Starting the $Proveedor tunnel..."
+  $procTunel = Start-Process -FilePath $cli -WindowStyle Hidden -PassThru -RedirectStandardOutput $tunelLog -RedirectStandardError "$tunelLog.err" -ArgumentList $argsTunel
+
+  $url = $null
+  $patronUrl = switch ($Proveedor) {
+    'ngrok'     { '(https://[a-zA-Z0-9\-\.]+\.(?:ngrok-free\.app|ngrok\.app|ngrok\.io|ngrok-free\.dev))' }
+    'tailscale' { '(https://[a-zA-Z0-9\-\.]+\.ts\.net)' }
+    'localhost' { '(https://[a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' }
+  }
+  for ($i = 0; $i -lt 60 -and -not $url; $i++) {
+    Start-Sleep -Seconds 1
+    if (Test-Path -LiteralPath $tunelLog) {
+      $mm = Select-String -LiteralPath $tunelLog -Pattern $patronUrl -AllMatches -ErrorAction SilentlyContinue |
+           ForEach-Object { $_.Matches } |
+           Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
+      if ($mm) { $url = $mm.Value }
+    }
+    if (-not $url -and $procTunel.HasExited) { break }
+  }
+
+  if (-not $url) {
+    $err = (Get-Content "$tunelLog.err" -Tail 5 -ErrorAction SilentlyContinue) -join ' '
+    Write-Err2 "The $Proveedor tunnel did not return a URL. $err"
+    try { Stop-Process -Id $procTunel.Id -Force -ErrorAction SilentlyContinue } catch {}
+    Read-Host "Press Enter to close this window" | Out-Null
+    return
+  }
+
+  # ── 3) servidor MCP local ──
+  $env:AI_PC_MCP_HOST = '127.0.0.1'
+  $env:AI_PC_MCP_PORT = "$Puerto"
+  $mcpLog = Join-Path $env:TEMP "tunnelai-mcp-$Puerto.log"
+  $server = Start-Process -FilePath 'pwsh' -WindowStyle Hidden -PassThru -RedirectStandardOutput $mcpLog -RedirectStandardError "$mcpLog.err" -ArgumentList @(
+    '-NoProfile', '-Command',
+    "Set-Location -LiteralPath '$Ruta'; `$env:AI_PC_MCP_HOST='127.0.0.1'; `$env:AI_PC_MCP_PORT='$Puerto'; chatgpt-local-mcp --no-tunnel --log"
+  )
+
+  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 45) { Write-Ok "MCP server responding on 127.0.0.1:$Puerto" }
+  else { Write-Warn "The server did not answer in time; see $mcpLog" }
+
+  $urlMcp = "$url/mcp"
+  Write-Ok "Tunnel established: $url"
+  Copy-TunnelAiUrl -Url $urlMcp
+  Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlMcp
+  Write-Info "Verify it end to end: Test-Conector-Gemini.cmd"
+  Start-TunnelAiVigia -Puerto $Puerto -Servidor 'chatgpt-local-mcp'
+
+  Write-Host ""
+  Write-Host "--- LIVE (Ctrl+C to close) ---" -ForegroundColor Cyan
+  Write-Host ""
+
+  $limite = if ($MaxMinutos -gt 0) { (Get-Date).AddMinutes($MaxMinutos) } else { $null }
+  try {
+    while ($true) {
+      Start-Sleep -Seconds 2
+      if ($procTunel.HasExited) { Write-Warn "The $Proveedor tunnel closed."; break }
+      if ($limite -and (Get-Date) -gt $limite) { Write-Info "Auto-close time reached."; break }
+    }
+  } finally {
+    Write-Host ""
+    Write-Info "Closing the tunnel and the MCP server..."
+    Stop-TunnelAiVigia
+    try { Stop-Process -Id $procTunel.Id -Force -ErrorAction SilentlyContinue } catch {}
+    try { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue } catch {}
+    Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
+    Write-Ok "Processes finished cleanly."
+  }
+}
+function Resolve-TunnelAiBin {
+  # Locate an executable on PATH or in the usual install folders (winget links may be missing).
+  param([Parameter(Mandatory = $true)][string]$Nombre)
+  $cmd = Get-Command "$Nombre.exe" -ErrorAction SilentlyContinue
+  if (-not $cmd) { $cmd = Get-Command $Nombre -ErrorAction SilentlyContinue }
+  if ($cmd) { return $cmd.Source }
+
+  $carpetas = @(
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Links'),
+    (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages'),
+    (Join-Path $env:ProgramFiles "$Nombre"),
+    (Join-Path ${env:ProgramFiles(x86)} "$Nombre"),
+    (Join-Path $env:USERPROFILE "AppData\Local\Programs\$Nombre"),
+    (Join-Path $env:USERPROFILE ".$Nombre")
+  )
+  foreach ($c in $carpetas) {
+    if (-not (Test-Path -LiteralPath $c)) { continue }
+    $hit = Get-ChildItem -LiteralPath $c -Filter "$Nombre.exe" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
+           Select-Object -First 1
+    if ($hit) { return $hit.FullName }
+  }
+  return $null
+}
+
+function Test-TunnelAiNgrokToken {
+  $cfg = Join-Path $env:USERPROFILE '.config\ngrok\ngrok.yml'
+  if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+  try {
+    $txt = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop
+    return ($txt -match 'authtoken:\s*\S')
+  } catch { return $false }
+}
+
+function Set-TunnelAiNgrokToken {
+  # Stores the ngrok authtoken once, so the launchers work with no further setup.
+  param([string]$Ngrok)
+  $cfgDir = Join-Path $env:USERPROFILE '.config\ngrok'
+  if (-not (Test-Path -LiteralPath $cfgDir)) {
+    New-Item -ItemType Directory -Path $cfgDir -Force | Out-Null
+  }
+  $read = Read-Host 'Paste your ngrok authtoken (ngrok.com -> dashboard -> Authtoken)'
+  $read = $read.Trim()
+  if (-not $read) { return $false }
+  & $Ngrok config add-authtoken $read 2>&1 | Out-Null
+  if (Test-TunnelAiNgrokToken) { Write-Ok "ngrok authtoken saved."; return $true }
+  Write-Err2 "Could not save the token. Run it manually: ngrok config add-authtoken <TOKEN>"
+  return $false
 }
 Export-ModuleMember -Function *

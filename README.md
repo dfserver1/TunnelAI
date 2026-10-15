@@ -297,3 +297,17 @@ never commit it, and prefer `gh auth login` (`winget install GitHub.cli`) when p
 Copyright (c) 2026 **Omar Pajares**. See [LICENSE](LICENSE).
 
 ## Publishing your own fork (optional)
+
+### Gemini: which tunnel actually works
+
+Measured on this project, not guessed:
+
+| Tunnel | Streaming (SSE) | Reachable from Google | Verdict |
+|---|---|---|---|
+| Cloudflare **quick** tunnel | no (buffers the body until the response ends) | yes | **Gemini aborts** (`context canceled`) |
+| `localhost.run` (SSH, no account) | yes | **no (502 for everyone but you)** | **Gemini can't reach it** |
+| `serveo.net` (no account) | - | no (HTML warning page) | unusable |
+| **ngrok** (free account) | yes | yes | **works** |
+
+Use `Iniciar-Gemini-Remoto.cmd` (ngrok). First run asks for your free authtoken
+(`ngrok.com` -> dashboard -> Authtoken) and stores it, so it is a one-time step.
