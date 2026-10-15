@@ -76,7 +76,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
 | `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | same tunnel → public `/mcp` URL | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
-| `Iniciar-Antigravity.cmd` | **Google Antigravity** | **local, no tunnel** → `localhost:3003/mcp` | 3003 |
+| `Iniciar-Antigravity-Remoto.cmd` | **Antigravity via tunnel** | same tunnel as ChatGPT + Bearer → public URL | 3001 |
 | `Verificar-Entorno.cmd` | diagnostics | Node, cloudflared, packages, ports | — |
 | `Limpiar-Bloqueo.cmd` | maintenance | frees 3001/3002/3003 (never kills node/dotnet globally) | — |
 | `Monitor-TunnelAI.cmd` | **sentinel** | probes every 20 s and repairs without killing the tunnel | any |
@@ -127,6 +127,22 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 3. In Antigravity: `⋯` (agent panel) → **MCP Servers → Refresh**
 4. To stop it: `Iniciar-Antigravity.ps1 -Detener`
 5. Also works with **Gemini CLI**: `gemini mcp add --transport http tunnelai http://localhost:3003/mcp`
+
+### Antigravity via the shared tunnel (public URL + Bearer)
+
+Use this when your Antigravity runs on **another machine**, or you want to reach the tunnel instead of localhost:
+
+1. Run `Iniciar-Antigravity-Remoto.cmd` (add `-Token mi-clave` for a Bearer-protected URL).
+2. The launcher writes the `tunnelai-remoto` server into `mcp_config.json` pointing at the **public tunnel URL**
+   (plus the `Authorization: Bearer` header when you pass a token) — nothing to configure by hand.
+3. In Antigravity: the agent panel `...` → **MCP Servers → Refresh**.
+4. Already have a tunnel open with `Iniciar-TunnelAI.cmd`? The launcher detects the live session on port 3001 and
+   **reuses its URL** (recovered from the cloudflared log) instead of opening a second tunnel.
+
+Verified end-to-end: without the token the public URL answers **401**; with `Authorization: Bearer <token>`, **200**.
+
+> Notes: the quick-tunnel URL changes on every boot — this launcher rewrites `mcp_config.json` on each run.
+> A Bearer-protected URL **cannot** be shared with ChatGPT/Gemini/Claude (web connectors don't send headers).
 
 ## Skills for the AI (15 ready-to-use roles)
 

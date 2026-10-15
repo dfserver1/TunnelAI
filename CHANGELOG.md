@@ -3,6 +3,20 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.1.0] — 2026-10-15
+
+### Added
+- **Antigravity over the shared tunnel**: `Iniciar-Antigravity-Remoto.cmd` opens the same tunnel as
+  ChatGPT/Gemini (port 3001) and writes the `tunnelai-remoto` server into Antigravity's `mcp_config.json`
+  pointing at the public URL, with an optional **Bearer token** (verified: 401 without it, 200 with it).
+  If a tunnel session is already live on port 3001, its URL is recovered from the cloudflared log and reused.
+- `Get-TunnelUrlActual` helper: recovers the current quick-tunnel URL from the cloudflared logs.
+- Bearer tokens are now also honoured for tunnel-mode clients that can send headers (Antigravity remote).
+
+### Fixed
+- Mermaid validator: no longer flags Markdown files without `mermaid` blocks; closing fences must start a line.
+- `Config-Tunel-Estable.ps1 -Plan`: dry run works in non-interactive shells (CI) and without cloudflared installed.
+
 ## [1.0.0] — 2026-10-15
 
 First public release.

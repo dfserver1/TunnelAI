@@ -21,7 +21,7 @@ function Write-Err2($m){ Write-Host "✗ $m" -ForegroundColor Red }
 
 # ── Per-client configuration ───────────────────────────────────────────────────
 function Get-TunnelAiCliente {
-  param([ValidateSet('ChatGPT','Claude','Gemini','Antigravity')][string]$Cliente)
+  param([ValidateSet('ChatGPT','Claude','Gemini','Antigravity','AntigravityRemoto')][string]$Cliente)
   $info = @{
     Nombre   = $Cliente
     Puerto   = 3001
@@ -33,6 +33,8 @@ function Get-TunnelAiCliente {
     'Gemini'      { $info.Puerto = 3001 }
     'Claude'      { $info.Puerto = 3002; $info.Servidor = 'expose-files-mcp' }
     'Antigravity' { $info.Puerto = 3003; $info.UsaTunel = $false }
+    # Antigravity over the SAME tunnel as ChatGPT/Gemini (public URL + Bearer header)
+    'AntigravityRemoto' { $info.Puerto = 3001 }
   }
   return $info
 }
@@ -407,6 +409,54 @@ function Set-AntigravityConfig {
   }
 }
 
+# ── 10b) Antigravity over the SHARED tunnel (public URL, optional Bearer) ──────
+function Set-AntigravityConfigRemoto {
+  param([string]$Url, [string]$Token = "")
+  $dir = Join-Path $env:USERPROFILE '.gemini\antigravity'
+  $file = Join-Path $dir 'mcp_config.json'
+  $serverName = 'tunnelai-remoto'
+  $entrada = [ordered]@{ serverUrl = $Url }
+  if ($Token) { $entrada['headers'] = [ordered]@{ Authorization = "Bearer $Token" } }
+  try {
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    if (Test-Path -LiteralPath $file) {
+      $json = Get-Content -LiteralPath $file -Raw | ConvertFrom-Json
+      if (-not $json.PSObject.Properties['mcpServers']) {
+        $json | Add-Member -NotePropertyName 'mcpServers' -NotePropertyValue (New-Object PSObject) -Force
+      }
+      $json.mcpServers | Add-Member -NotePropertyName $serverName -NotePropertyValue ([pscustomobject]$entrada) -Force
+      $json | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $file -Encoding UTF8
+    } else {
+      @{ mcpServers = @{ $serverName = [pscustomobject]$entrada } } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $file -Encoding UTF8
+    }
+    Write-Ok "Antigravity (remote) configured: $file"
+    Write-Info "serverUrl: $Url (token: $(if ($Token) { 'yes' } else { 'no' }))"
+    Write-Info "NOTE: the quick-tunnel URL changes on every boot - this launcher rewrites it for you each run."
+  } catch {
+    Write-Warn "Couldn't write $file ($($_.Exception.Message))."
+    $q = [string][char]34
+    $hint = '{ "mcpServers": { ' + $q + $serverName + $q + ': { ' + $q + 'serverUrl' + $q + ': ' + $q + $Url + $q
+    if ($Token) { $hint += ', ' + $q + 'headers' + $q + ': { ' + $q + 'Authorization' + $q + ': ' + $q + 'Bearer <token>' + $q + ' }' }
+    $hint += ' } } }'
+    Write-Info "Add it manually: $hint"
+  }
+}
+# ── 10c) recover the current quick-tunnel URL from cloudflared's log ───────────
+function Get-TunnelUrlActual {
+  $logs = @(
+    (Join-Path $env:USERPROFILE '.chatgpt-local-mcp\logs\cloudflared.log'),
+    (Join-Path $env:USERPROFILE '.chatgpt-local-mcp\logs\server.log')
+  )
+  foreach ($lg in $logs) {
+    if (Test-Path -LiteralPath $lg) {
+      $m = Select-String -LiteralPath $lg -Pattern '(https://[a-zA-Z0-9-]+\.trycloudflare\.com)' -AllMatches |
+           ForEach-Object { $_.Matches } | Select-Object -Last 1
+      if ($m) { return "$($m.Value)/mcp" }
+    }
+  }
+  return $null
+}
+
 # ── 11) Automatic sentinel ────────────────────────────────────────────────────
 function Start-TunnelAiVigia {
   param([int]$Puerto, [string]$Servidor)
@@ -440,7 +490,7 @@ function Stop-TunnelAiVigia {
 function Start-TunnelAiSession {
   [CmdletBinding()]
   param(
-    [ValidateSet('ChatGPT','Claude','Gemini','Antigravity')][string]$Cliente,
+    [ValidateSet('ChatGPT','Claude','Gemini','Antigravity','AntigravityRemoto')][string]$Cliente,
     [string]$Ruta,
     [int]$Puerto = 0,
     [int]$MaxMinutos = 0,
@@ -455,10 +505,10 @@ function Start-TunnelAiSession {
     $info.UsaTunel = $false
     Write-Warn "-SinTunel mode: the MCP only listens on 127.0.0.1:$Puerto. You need an external tunnel (Iniciar-Tunel-Nombrado.cmd) to connect from outside."
   }
-  # The Bearer token only applies to header-capable clients (Antigravity/local):
-  # web connectors (ChatGPT/Claude/Gemini) only accept a URL without headers.
-  if ($Token -and $info.UsaTunel) {
-    Write-Warn "Token ignored: web connectors (ChatGPT/Claude/Gemini) don't support headers. Use it with Antigravity (local mode)."
+  # The Bearer token only applies to header-capable clients. Web connectors
+  # (ChatGPT/Claude/Gemini) only accept a URL without headers.
+  if ($Token -and $info.UsaTunel -and $Cliente -in 'ChatGPT','Claude','Gemini') {
+    Write-Warn "Token ignored: web connectors (ChatGPT/Claude/Gemini) don't support headers."
     $Token = ""
   }
   if ($Token) { $env:AI_PC_MCP_TOKEN = $Token }
@@ -469,6 +519,7 @@ function Start-TunnelAiSession {
     'Gemini'      { 'TunnelAI - Gemini -> your PC' }
     'Claude'      { 'TunnelAI - Claude -> your PC (MCP)' }
     'Antigravity' { 'TunnelAI - Antigravity -> your PC (local, no tunnel)' }
+    'AntigravityRemoto' { 'TunnelAI - Antigravity -> your PC (via tunnel)' }
   }
   Write-Host ""
   Write-Host "╔════════════════════════════════════════════════════╗" -ForegroundColor Cyan
@@ -495,6 +546,20 @@ function Start-TunnelAiSession {
       Set-AntigravityConfig -Puerto $Puerto -Token $Token
       Show-TunnelAiInstrucciones -Cliente $Cliente
       Write-Info "To stop it: Iniciar-Antigravity.ps1 -Detener"
+      return
+    }
+    if ($Cliente -eq 'AntigravityRemoto') {
+      # reuse the tunnel that is already up: recover its URL from cloudflared's log
+      $urlActiva = Get-TunnelUrlActual
+      if ($urlActiva) {
+        Write-Ok "A tunnel session is already active on port $Puerto — reusing its URL."
+        Set-AntigravityConfigRemoto -Url $urlActiva -Token ""
+        Show-TunnelAiInstrucciones -Cliente 'Antigravity'
+        Write-Info "If the other session requires a token, copy it from that window into mcp_config.json."
+        return
+      }
+      Write-Warn "A session is active on port $Puerto but I couldn't recover its URL from the logs."
+      Write-Info "Copy the URL shown in that window and paste it into mcp_config.json manually."
       return
     }
     $otro = if ($Puerto -eq 3001) { 'ChatGPT/Gemini' } else { 'another client' }
@@ -587,6 +652,13 @@ function Start-TunnelAiSession {
         Copy-TunnelAiUrl -Url $script:TA_UrlAnunciada
         if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 5) { Write-Ok "MCP server responding on 127.0.0.1:$Puerto" }
         Show-TunnelAiInstrucciones -Cliente $Cliente -Url $script:TA_UrlAnunciada
+        # Antigravity over the tunnel: write its mcp_config.json pointing to the public URL
+        if ($Cliente -eq 'AntigravityRemoto') {
+          $script:TA_ConfigEscrito = $true
+          Set-AntigravityConfigRemoto -Url $script:TA_UrlAnunciada -Token $Token
+          Show-TunnelAiInstrucciones -Cliente 'Antigravity'
+          Write-Info "Tip: if you also want ChatGPT/Gemini on this same URL, they cannot use the token (web connectors don't send headers)."
+        }
         Start-TunnelAiVigia -Puerto $Puerto -Servidor $info.Servidor
       }
 
