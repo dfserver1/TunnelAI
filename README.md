@@ -74,7 +74,8 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | File | Client / purpose | How it connects | Port |
 |---|---|---|---|
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
-| `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | same tunnel → public `/mcp` URL | 3001 |
+| `Iniciar-Gemini-SSH.cmd` | **Gemini** (web/mobile) | SSH streaming tunnel (SSE works) | public `/mcp` URL | 3001 |
+| `Iniciar-Gemini.cmd` | Gemini via Cloudflare | same tunnel | public `/mcp` URL (**SSE blocked**) | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
 | `Iniciar-Antigravity-Remoto.cmd` | **Antigravity via tunnel** | same tunnel as ChatGPT + Bearer → public URL | 3001 |
 | `Verificar-Entorno.cmd` | diagnostics | Node, cloudflared, packages, ports | — |
@@ -108,8 +109,16 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 2. Paste the folder → Enter
 3. In ChatGPT: `Settings → Connectors → Add connector → MCP` → Authentication: **No Auth** → paste the URL.
 
-### Gemini (gemini.google.com)
-1. Double-click `Iniciar-Gemini.cmd` → paste the folder → Enter
+### Gemini (gemini.google.com) — needs the SSH launcher
+
+> **Important**: Gemini speaks the **legacy MCP HTTP+SSE transport** (it opens `GET /mcp` and keeps
+> a long-lived stream). Cloudflare quick tunnels **buffer streaming responses until they end**, so
+> Gemini never receives the `endpoint` frame and aborts after ~10 s with `context canceled`.
+> Measured with a minimal SSE server: 2.9 KB locally, **0 bytes** through a quick tunnel.
+> An SSH reverse tunnel streams in real time, so that is what Gemini uses. ChatGPT and Claude keep
+> using Cloudflare (plain request/response works there).
+
+1. Double-click **`Iniciar-Gemini-SSH.cmd`** → paste the folder → Enter
 2. In Gemini: `Settings → Connected Apps → Custom apps → Add a custom app` → paste the URL
 3. If it asks for credentials: `Client ID: tunnelai` · `Client Secret: tunnelai` (any value works)
 4. Gemini registers itself (OAuth 2.1 + PKCE) and you get a consent page — *TunnelAI authorizes access* → **I understand**
@@ -118,7 +127,7 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 Run `Test-Conector-Gemini.cmd` at any time: it verifies the MCP handshake **and** the whole OAuth flow
 (discovery → registration → consent → token → 53 tools), so you can tell our side from Google's.
 
-> ChatGPT and Gemini can share the same URL at the same time — the launcher detects an active session on port 3001 and reuses it.
+> `Iniciar-Gemini.cmd` (Cloudflare) still exists for testing, but Gemini will not connect through it: use the SSH launcher.
 
 ### Claude
 1. Double-click `Iniciar-Claude.cmd` (**not** the ChatGPT one)

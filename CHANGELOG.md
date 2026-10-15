@@ -3,6 +3,28 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.3.0] — 2026-10-15
+
+### Fixed — the real reason Gemini never connected
+Diagnosed with the live logs and reproduced with a minimal SSE server: **Cloudflare quick tunnels
+buffer streaming responses and only forward them when the response ends.** Gemini web speaks the
+legacy MCP HTTP+SSE transport (it opens `GET /mcp` and waits for an `event: endpoint` frame), so it
+never received anything, waited ~10 s and dropped the request (`context canceled`). Proof:
+2.9 KB locally vs **0 bytes** through the tunnel, on the package's own `/logs/live` endpoint too.
+
+### Added
+- **`Iniciar-Gemini-SSH.cmd` / `.ps1`** — Gemini over an SSH reverse tunnel (`localhost.run`, no
+  account). It streams in real time, so the whole legacy flow works: `event: endpoint` →
+  `POST /mcp?sessionId=…` (202) → replies on the stream. Verified end-to-end (53 tools).
+- Legacy HTTP+SSE transport support in the patched server: `GET /mcp` now answers `event: endpoint`
+  with a session id, `POST /mcp?sessionId=…` answers `202 Accepted` and pushes the JSON-RPC reply
+  **on the SSE stream**, and `DELETE /mcp?sessionId=…` closes the session. Clients that POST
+  directly to `/mcp` (ChatGPT, Claude, Antigravity) keep working unchanged.
+- `Test-Conector-Gemini.ps1` now verifies the **SSE handshake** too and tells you which tunnel type
+  is live, so you can tell a Cloudflare URL (will fail for Gemini) from an SSH one (works).
+
+### Changed
+- The console now warns when a Gemini session runs over Cloudflare, and recommends the SSH launcher.
 ## [1.2.0] — 2026-10-15
 
 ### Added

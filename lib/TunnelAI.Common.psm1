@@ -160,6 +160,105 @@ function Install-TunnelAiPatches {
     $changed = $true
   }
 
+  # 5b) Legacy HTTP+SSE transport (MCP 2024-11-05) required by Gemini web
+  if ($t -and $t.Contains('patched TunnelAI sse')) {
+    # self-healing: remove any previous insertion before re-inserting
+    $prev = $t -split "`n?`n"
+    $ini = -1; $fin = -1
+    for ($k = 0; $k -lt $prev.Count; $k++) {
+      if ($prev[$k] -match '// 5b\) Legacy HTTP\+SSE transport') { $ini = $k }
+      if ($prev[$k] -match '// patched TunnelAI sse') { $fin = $k }
+    }
+    if ($ini -ge 0 -and $fin -ge $ini) {
+      $nuevas = @()
+      if ($ini -gt 0) { $nuevas += $prev[0..($ini-1)] }
+      if ($fin + 1 -le $prev.Count - 1) { $nuevas += $prev[($fin+1)..($prev.Count-1)] }
+      $t = $nuevas -join "`n"
+    } else {
+      $t = ($prev | Where-Object { $_ -notmatch '// patched TunnelAI sse' }) -join "`n"
+    }
+    $changed = $true
+  }
+  if ($t -and -not $t.Contains('patched TunnelAI sse')) {
+    $mwSse = @'
+// 5b) Legacy HTTP+SSE transport (MCP 2024-11-05).
+  //      Remote web connectors (Gemini web, etc.) open GET /mcp and WAIT for an
+  //      `event: endpoint` frame naming the URL to POST to. They then POST their
+  //      JSON-RPC messages to /mcp?sessionId=... and expect the reply ON THE SSE
+  //      STREAM (the POST itself is answered with 202 Accepted).
+  //      Upstream answered `event: ready` and replied over plain HTTP, so the client
+  //      waited ~10 s and dropped the tunnel request ("context canceled").
+  const __taSse = new Map();
+  const __taSseHandler = (req, res) => {
+    const ip = (req.headers["x-forwarded-for"] || "").split(",")[0].trim() || (req.socket && req.socket.remoteAddress) || "?";
+    const sid = crypto.randomBytes(16).toString("hex");
+    res.status(200).set({
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    if (typeof res.flushHeaders === "function") res.flushHeaders();
+    // the FIRST frame must be `endpoint` (legacy transport spec)
+    res.write("event: endpoint\ndata: " + publicBaseUrl(req) + "/mcp?sessionId=" + sid + "\n\n");
+    // Cloudflare holds back tiny streamed chunks; this padding forces the first flush
+    // through the tunnel so the client sees the `endpoint` frame right away.
+    res.write(":" + " ".repeat(3072) + "\n\n");
+    res.write("event: ready\ndata: " + JSON.stringify({ name: SERVER_ID, version: VERSION, mcp: "/mcp" }) + "\n\n");
+    __taSse.set(sid, { res, ip, at: Date.now() });
+    console.log("[SSE] client connected [" + ip + "] session=" + sid.slice(0, 8));
+    const timer = setInterval(() => { try { res.write(": ping " + Date.now() + "\n\n"); } catch {} }, 15000);
+    req.on("close", () => {
+      clearInterval(timer);
+      __taSse.delete(sid);
+      console.log("[SSE] client disconnected [" + ip + "]");
+    });
+  };
+  app.get("/mcp", __taSseHandler);
+  app.get("/sse", __taSseHandler);
+  app.post("/mcp", async (req, res) => {
+    const sid = req.query && req.query.sessionId;
+    if (!sid || !__taSse.has(sid)) return handleMcpRequest(req, res);
+    const s = __taSse.get(sid);
+    try {
+      const body = req.body;
+      const msgs = Array.isArray(body) ? body : [body];
+      for (const m of msgs) {
+        const out = await handleMcpMessage(m, req);
+        if (out) s.res.write("event: message\ndata: " + JSON.stringify(out) + "\n\n");
+      }
+      res.status(202).end();
+    } catch (error) {
+      try {
+        s.res.write("event: message\ndata: " + JSON.stringify({ jsonrpc: "2.0", id: null, error: { code: -32000, message: error.message } }) + "\n\n");
+      } catch {}
+      res.status(202).end();
+    }
+  });
+  app.delete("/mcp", (req, res) => {
+    const sid = req.query && req.query.sessionId;
+    if (sid && __taSse.has(sid)) { try { __taSse.get(sid).res.end(); } catch {} __taSse.delete(sid); }
+    res.status(200).end();
+  });
+  const __taSseSweep = setInterval(() => {
+    const now = Date.now();
+    for (const [k, v] of __taSse) {
+      if (now - v.at > 1800000) { try { v.res.end(); } catch {} __taSse.delete(k); }
+    }
+  }, 60000);
+  if (typeof __taSseSweep.unref === "function") __taSseSweep.unref(); // patched TunnelAI sse
+'@
+    $lineas = $t -split "`n?`n"
+    $idxPost = -1
+    for ($i = 0; $i -lt $lineas.Count; $i++) { if ($lineas[$i] -match 'app\.post\("/mcp", handleMcpRequest\);') { $idxPost = $i; break } }
+    if ($idxPost -lt 0) { throw 'TunnelAI: app.post("/mcp", handleMcpRequest) not found in server.js' }
+    $nuevo = @()
+    if ($idxPost -gt 0) { $nuevo += $lineas[0..($idxPost-1)] }
+    $nuevo += ($mwSse -split "`n?`n")
+    $nuevo += $lineas[$idxPost..($lineas.Count-1)]
+    $t = $nuevo -join "`n"
+    $changed = $true
+  }
   # 5) OAuth 2.1 / DCR shim for Gemini web custom apps (discovery, register, consent, token)
   if ($t -and -not $t.Contains('patched TunnelAI oauth')) {
     $mw = @'
@@ -274,6 +373,27 @@ button{margin-top:16px;background:#22d3ee;color:#04222b;border:0;border-radius:8
     $t = $t -replace '(?m)^(\s*)app\.listen\(PORT, HOST', '$1const server = app.listen(PORT, HOST'
     $changed = $true
   }
+  # invariant: upstream assigns the result of app.listen() to `server`; a bare
+  # `app.listen(...)` would make server.on("error") throw ReferenceError.
+  if ($t -and $t.Contains('app.listen(PORT, HOST') -and -not $t.Contains('const server = app.listen(PORT, HOST')) {
+    $ls = $t -split "`n?`n"
+    for ($i = 0; $i -lt $ls.Count; $i++) {
+      if ($ls[$i] -match '^\s*app\.listen\(PORT, HOST') {
+        $prevLine = ''; $j = -1
+        for ($k2 = $i - 1; $k2 -ge 0; $k2--) { if ($ls[$k2].Trim()) { $prevLine = $ls[$k2].Trim(); $j = $k2; break } }
+        if ($prevLine -notmatch '^const server\s*=\s*$') {
+          $ls[$i] = $ls[$i] -replace '^(\s*)app\.listen', '$1const server = app.listen'
+        } else {
+          $ls[$i] = '  const server = app.listen(PORT, HOST, ' + ($ls[$i] -replace '^\s*app\.listen\(PORT, HOST,\s*', '')
+          $ls[$j] = ''
+        }
+        break
+      }
+    }
+    $t = $ls -join "`n"
+    $changed = $true
+  }
+
   if ($changed) {
     Set-Content -LiteralPath $src -Value $t -Encoding UTF8
     Write-Ok "Patches applied to $src"
@@ -478,14 +598,19 @@ function Show-TunnelAiInstrucciones {
       Write-Host "    Authentication: No Auth   ·   URL: $Url" -ForegroundColor DarkGray
     }
     'Gemini' {
+      $esSsh = ($Url -match '\.lhr\.life|loca\.lt|serveo\.net|localhost\.me')
+      if (-not $esSsh) {
+        Write-Warn "This URL goes through a Cloudflare quick tunnel."
+        Write-Warn "Cloudflare BUFFERS streaming responses and Gemini needs SSE (it waits"
+        Write-Warn "for 'event: endpoint'), so it aborts after ~10 s with 'context canceled'."
+        Write-Info "For Gemini use Iniciar-Gemini-SSH.cmd (real streaming tunnel)."
+      }
       Write-Host "  Gemini (gemini.google.com) -> Settings -> Connected Apps -> Custom apps" -ForegroundColor White
       Write-Host "    Add a custom app: paste the URL   ·   $Url" -ForegroundColor DarkGray
       Write-Host "    Client ID: tunnelai    Client Secret: tunnelai    (any value works)" -ForegroundColor DarkGray
-      Write-Info "OAuth 2.1 enabled: Gemini registers itself, then you will see the"
-      Write-Info "consent page 'TunnelAI authorizes access' -> click 'I understand'."
+      Write-Info "On the consent page ('TunnelAI authorizes access') click 'I understand'."
       Write-Info "Gemini requirements: personal account (not Workspace), Keep Activity enabled."
-      Write-Info "Verify anytime with: Test-Conector-Gemini.cmd"
-      Write-Info "Tip: Gemini and ChatGPT can share this SAME URL with no conflicts."
+      Write-Info "Verify anytime with: Test-Conector-Gemini.cmd (it checks the SSE handshake)."
     }
     'Claude' {
       Write-Host "  Claude -> Customize -> Connectors -> Add custom connector" -ForegroundColor White
@@ -633,6 +758,11 @@ function Start-TunnelAiSession {
   if ($Token) { $env:AI_PC_MCP_TOKEN = $Token }
 
   # Banner
+  if ($Cliente -eq 'Gemini' -and $info.UsaTunel) {
+    Write-Warn "NOTE: Gemini needs a STREAMING tunnel. Cloudflare quick tunnels buffer SSE"
+    Write-Warn "responses, so Gemini will not connect through this URL."
+    Write-Info "For Gemini use Iniciar-Gemini-SSH.cmd (Cloudflare is fine for ChatGPT/Claude)."
+  }
   $titulo = switch ($Cliente) {
     'ChatGPT'     { 'TunnelAI - ChatGPT -> your PC' }
     'Gemini'      { 'TunnelAI - Gemini -> your PC' }
@@ -803,4 +933,139 @@ function Start-TunnelAiSession {
   }
 }
 
+function Start-TunnelAiSshSession {
+  <#
+    Gemini session over an SSH tunnel (localhost.run).
+
+    Why not Cloudflare? Gemini web speaks the LEGACY MCP HTTP+SSE transport: it opens
+    GET /mcp and keeps a long-lived stream open. Cloudflare quick tunnels buffer
+    streaming responses until they END, so the client never receives the `endpoint`
+    frame, waits ~10 s and drops the request ("context canceled"). Verified with a
+    minimal SSE server: 2.9 KB local, 0 bytes through a quick tunnel.
+    An SSH reverse tunnel streams in real time, so it is the only option here that
+    works for Gemini. ChatGPT/Claude keep using Cloudflare (plain request/response).
+  #>
+  param(
+    [string]$Ruta,
+    [int]$Puerto = 3001,
+    [int]$MaxMinutos = 0,
+    [string]$HostTunel = 'localhost.run'
+  )
+
+  Write-Host ""
+  Write-Host "TunnelAI - Gemini -> your PC (SSH tunnel, streaming)" -ForegroundColor Cyan
+  Write-Host "Cloudflare quick tunnels block SSE, which Gemini needs; this launcher uses SSH." -ForegroundColor DarkGray
+  Write-Host ""
+
+  Assert-TunnelAiNode
+  Assert-ChatGptLocalMcp
+  Install-TunnelAiPatches
+
+  # a Cloudflare session on the same port would block us: explain and offer to free it
+  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 3) {
+    $urlActiva = Get-TunnelUrlActual
+    Write-Warn "A session is already active on port $Puerto."
+    if ($urlActiva -and $urlActiva -match 'trycloudflare') {
+      Write-Info "That session uses Cloudflare, which cannot stream SSE (Gemini needs it)."
+      Write-Info "Close the other TunnelAI window (or run Limpiar-Bloqueo.cmd) and start this one again."
+    } else {
+      Write-Info "Another SSH session is already running on this port. Close it and try again."
+    }
+    return
+  }
+
+  $Ruta = Read-TunnelAiRuta -Ruta $Ruta
+  $pidsOcupando = @(Get-TunnelAiPortPids -Puerto $Puerto)
+  if ($pidsOcupando.Count -gt 0) { Stop-TunnelAiPuerto -Puerto $Puerto | Out-Null }
+
+  Write-Host ""
+  Write-Ok "Exposed folder: $Ruta"
+  Write-Info "LOCAL mode on 127.0.0.1:$Puerto (not exposed to your LAN)"
+  if ($MaxMinutos -gt 0) { Write-Info "Auto-close enabled: the tunnel stops after $MaxMinutos minute(s)." }
+  Write-Host ""
+
+  $sshLog = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
+  Remove-Item -LiteralPath $sshLog -ErrorAction SilentlyContinue
+
+  # ── 1) SSH tunnel (started first so the URL appears as soon as it is ready) ──
+  $sshExe = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
+  if (-not $sshExe) { $sshExe = (Get-Command ssh -ErrorAction SilentlyContinue).Source }
+  if (-not $sshExe) {
+    Write-Err2 "OpenSSH client not found. Install it: Settings -> Apps -> Optional features -> OpenSSH Client."
+    Read-Host "Press Enter" | Out-Null; return
+  }
+
+  Write-Info "Starting the SSH tunnel to $HostTunel (no account needed)..."
+  $sshProc = Start-Process -FilePath $sshExe -WindowStyle Hidden -PassThru -RedirectStandardOutput $sshLog -RedirectStandardError "$sshLog.err" -ArgumentList @(
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'ServerAliveInterval=30',
+    '-o', 'ServerAliveCountMax=3',
+    '-R', "80:127.0.0.1:$Puerto",
+    "nokey@$HostTunel"
+  )
+
+  $url = $null
+  for ($i = 0; $i -lt 40 -and -not $url; $i++) {
+    Start-Sleep -Seconds 1
+    if (Test-Path -LiteralPath $sshLog) {
+      $m = Select-String -LiteralPath $sshLog -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,})' -AllMatches -ErrorAction SilentlyContinue |
+           ForEach-Object { $_.Matches } | Select-Object -Last 1
+      if ($m -and $m.Value -notmatch 'localhost\.run') { $url = $m.Value }
+    }
+    if (-not $url -and $sshProc.HasExited) { break }
+  }
+
+  if (-not $url) {
+    Write-Err2 "The SSH tunnel did not return a public URL (see $sshLog)."
+    Write-Info "Check your internet connection and try again."
+    try { Stop-Process -Id $sshProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    Read-Host "Press Enter" | Out-Null; return
+  }
+
+  # ── 2) MCP server, local only ──
+  $env:AI_PC_MCP_HOST = '127.0.0.1'
+  $env:AI_PC_MCP_PORT = "$Puerto"
+  $mcpLog = Join-Path $env:TEMP "tunnelai-sse-mcp-$Puerto.log"
+
+  Write-Ok "Tunnel established: $url"
+  Write-Info "Starting the MCP server (local, streamed through SSH)..."
+  $server = Start-Process -FilePath 'pwsh' -WindowStyle Hidden -PassThru -RedirectStandardOutput $mcpLog -RedirectStandardError "$mcpLog.err" -ArgumentList @(
+    '-NoProfile', '-Command',
+    "Set-Location -LiteralPath '$Ruta'; `$env:AI_PC_MCP_HOST='127.0.0.1'; `$env:AI_PC_MCP_PORT='$Puerto'; chatgpt-local-mcp --no-tunnel --log"
+  )
+
+  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 45) {
+    Write-Ok "MCP server responding on 127.0.0.1:$Puerto"
+  } else {
+    Write-Warn "The server did not answer in time; see $mcpLog"
+  }
+
+  $urlMcp = "$url/mcp"
+  Copy-TunnelAiUrl -Url $urlMcp
+  Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlMcp
+  Write-Info "This URL changes on every run (free random domain)."
+  Write-Info "If Gemini still refuses, run Test-Conector-Gemini.cmd: it verifies the SSE handshake."
+  Start-TunnelAiVigia -Puerto $Puerto -Servidor 'chatgpt-local-mcp'
+
+  Write-Host ""
+  Write-Host "── LIVE (Ctrl+C to close) ──" -ForegroundColor Cyan
+  Write-Host ""
+
+  $limite = if ($MaxMinutos -gt 0) { (Get-Date).AddMinutes($MaxMinutos) } else { $null }
+  try {
+    while ($true) {
+      Start-Sleep -Seconds 2
+      if ($sshProc.HasExited) { Write-Err2 "The SSH tunnel closed unexpectedly."; break }
+      if ($limite -and (Get-Date) -gt $limite) { Write-Info "Auto-close time reached."; break }
+    }
+  } finally {
+    Write-Host ""
+    Write-Info "Closing the SSH tunnel and the MCP server..."
+    Stop-TunnelAiVigia
+    try { Stop-Process -Id $sshProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+    try { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue } catch {}
+    Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
+    Write-Ok "Processes finished cleanly."
+  }
+}
 Export-ModuleMember -Function *
