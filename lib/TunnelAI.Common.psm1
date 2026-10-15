@@ -616,11 +616,11 @@ function Show-TunnelAiInstrucciones {
       Write-Host "    Authentication: No Auth   ·   URL: $Url" -ForegroundColor DarkGray
     }
     'Gemini' {
-      $esSsh = ($Url -match '\.lhr\.life|loca\.lt|serveo\.net|localhost\.me')
-      if (-not $esSsh) {
+      $esStreaming = ($Url -notmatch 'trycloudflare')   # every non-Cloudflare tunnel streams
+      if (-not $esStreaming) {
         Write-Warn "This URL goes through a Cloudflare quick tunnel."
         Write-Warn "Cloudflare BUFFERS streaming responses and Gemini needs SSE (it waits"
-        Write-Warn "for 'event: endpoint'), so it aborts after ~10 s with 'context canceled'."
+        Write-Info "For Gemini use Iniciar-Gemini-Remoto.cmd (Tailscale Funnel or ngrok)."
         Write-Info "For Gemini use Iniciar-Gemini-SSH.cmd (real streaming tunnel)."
       }
       Write-Host "  Gemini (gemini.google.com) -> Settings -> Connected Apps -> Custom apps" -ForegroundColor White
