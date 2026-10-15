@@ -27,7 +27,6 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | `Monitor-TunnelAI.cmd` | **sentinel** | probes every 20 s and repairs without killing the tunnel | any |
 | `Agregar-Skill.cmd` | **skills** | installs 15 AI roles into the exposed folder | — |
 | `Config-Tunel-Estable.cmd` | advanced | named Cloudflare tunnel → **stable URL** (needs account+domain) | — |
-| `Publicar-GitHub.cmd` | publishing | pushes this repo to GitHub (public or private) | — |
 
 `lib/TunnelAI.Common.psm1` holds the shared logic. `Tools/` contains the OCR engine, PDF converter and diagram generator. `.ultima_ruta.txt` remembers your last folder.
 
@@ -186,15 +185,26 @@ Validate the installation-detection logic at any time: `Monitor-TunnelAI.ps1 -Au
 - Context canceled at ~37-45 s → normal (web connectors cut execution); split long builds.
 - OCR says "No OCR engine" → use `-Idioma es-ES` or install tesseract with winget (see Skills section).
 
-## Publishing your own repo (optional)
+## Publishing your own fork (optional)
 
+TunnelAI is MIT-licensed, so you can fork it and publish your own version. Four standard git
+commands are all you need (no custom scripts, fully auditable):
+
+```powershell
+cd C:\Proyectos\TunnelAI
+git init
+git add .
+git commit -m "My TunnelAI fork"
 ```
-Publicar-GitHub.cmd -Plan      # dry run: what it would do (changes nothing)
-Publicar-GitHub.cmd            # creates the PUBLIC repo on your GitHub and pushes everything
-Publicar-GitHub.cmd -Privado   # private repo
+Then create an **empty** repo at https://github.com/new (public or private, no README) and:
+```powershell
+git branch -M main
+git remote add origin https://github.com/<your-user>/<your-repo>.git
+git push -u origin main
 ```
-You need `git` and, recommended, GitHub CLI (`winget install GitHub.cli`) for browser authentication.
-A classic token with `repo` scope also works (`-Token ghp_...`) and is **never** stored in the repo or in git config.
+Git will ask for credentials the first time (browser or PAT). If you prefer a token:
+https://github.com/settings/tokens → classic, scope `repo`. A token is a password:
+never commit it, and prefer `gh auth login` (`winget install GitHub.cli`) when possible.
 
 ## License
 
