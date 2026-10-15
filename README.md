@@ -74,7 +74,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | File | Client / purpose | How it connects | Port |
 |---|---|---|---|
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
-| `Iniciar-Gemini-SSH.cmd` | **Gemini** (web/mobile) | SSH streaming tunnel (SSE works) | public `/mcp` URL | 3001 |
+| `Iniciar-Gemini-SSH.cmd` | Gemini via localhost.run | experimental | **502 outside your network** | 3001 |
 | `Iniciar-Gemini.cmd` | Gemini via Cloudflare | same tunnel | public `/mcp` URL (**SSE blocked**) | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
 | `Iniciar-Antigravity-Remoto.cmd` | **Antigravity via tunnel** | same tunnel as ChatGPT + Bearer → public URL | 3001 |
