@@ -1,0 +1,44 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  powershell-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PowerShell syntax check (all .ps1 / .psm1)
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Recurse -Include *.ps1,*.psm1 -File | Where-Object { $_.FullName -notmatch '\\(bin|node_modules)\\' }
+          $fail = 0
+          foreach ($f in $files) {
+            $errs = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$errs)
+            if ($errs -and $errs.Count) { Write-Host "SYNTAX FAIL: $($f.Name)"; $fail++ }
+            else { Write-Host "OK $($f.Name)" }
+          }
+          if ($fail -gt 0) { Write-Host "$fail file(s) with syntax errors"; exit 1 }
+
+      - name: Skills present and complete
+        shell: pwsh
+        run: |
+          $skills = Get-ChildItem Skills -Filter *.md -File
+          Write-Host "Skills: $($skills.Count)"
+          if ($skills.Count -lt 15) { Write-Host "Expected at least 15 skills"; exit 1 }
+          foreach ($s in $skills) {
+            if ((Get-Content $s.FullName -Raw).Length -lt 500) { Write-Host "Skill too short: $($s.Name)"; exit 1 }
+          }
+
+      - name: Tools parse and respond to -Plan/help without touching anything
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File Tools/Nuevo-Diagrama.ps1 -Validar -Ruta README.md
+          pwsh -NoProfile -File Config-Tunel-Estable.ps1 -Plan -Hostname "ci.example.com" | Out-Null
+          pwsh -NoProfile -File Publicar-GitHub.ps1 -Plan | Out-Null
+          Write-Host "Tools OK"
