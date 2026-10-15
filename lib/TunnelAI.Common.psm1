@@ -1235,12 +1235,12 @@ function Start-TunnelAiRemoteSession {
   $cli = $null
   $falta = ''
   if ($Proveedor -eq 'ngrok') {
-    $cli = (Get-Command ngrok.exe -ErrorAction SilentlyContinue).Source
-    if (-not $cli) { $cli = (Get-Command ngrok -ErrorAction SilentlyContinue).Source }
+    $cli = Resolve-TunnelAiBin -Nombre ngrok
     if (-not $cli) { $falta = 'ngrok' }
+    if ($cli -and -not (Test-TunnelAiNgrokToken)) { Set-TunnelAiNgrokToken -Ngrok $cli | Out-Null }
   } elseif ($Proveedor -eq 'tailscale') {
-    $cli = (Get-Command tailscale.exe -ErrorAction SilentlyContinue).Source
-    if (-not $cli) { $cli = (Get-Command tailscale -ErrorAction SilentlyContinue).Source }
+    $cli = Resolve-TunnelAiBin -Nombre tailscale
+    if (-not $cli) { $falta = 'tailscale' }
     if (-not $cli) { $falta = 'tailscale' }
   } else {
     $cli = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
@@ -1366,12 +1366,22 @@ function Resolve-TunnelAiBin {
 }
 
 function Test-TunnelAiNgrokToken {
-  $cfg = Join-Path $env:USERPROFILE '.config\ngrok\ngrok.yml'
-  if (-not (Test-Path -LiteralPath $cfg)) { return $false }
-  try {
-    $txt = Get-Content -LiteralPath $cfg -Raw -ErrorAction Stop
-    return ($txt -match 'authtoken:\s*\S')
-  } catch { return $false }
+  # ngrok stores the config in %LOCALAPPDATA%\ngrok\ngrok.yml on Windows
+  # (and in ~/.config/ngrok/ngrok.yml on other platforms). Check both.
+  $rutas = @(
+    (Join-Path $env:LOCALAPPDATA 'ngrok\ngrok.yml'),
+    (Join-Path $env:USERPROFILE '.config\ngrok\ngrok.yml'),
+    (Join-Path $env:APPDATA 'ngrok\ngrok.yml')
+  )
+  foreach ($r in $rutas) {
+    if (Test-Path -LiteralPath $r) {
+      try {
+        $txt = Get-Content -LiteralPath $r -Raw -ErrorAction Stop
+        if ($txt -match 'authtoken:\s*(\S+)') { return $true }
+      } catch {}
+    }
+  }
+  return $false
 }
 
 function Set-TunnelAiNgrokToken {
