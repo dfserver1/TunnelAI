@@ -82,7 +82,6 @@ Write-Info "  5. Final stable URL: https://$Hostname/mcp"
 if ($Plan) {
   Write-Host ""
   Write-Ok "Dry-run mode: nothing was changed. Run it without -Plan to apply."
-  Read-Host "Press Enter" | Out-Null
   return
 }
 
