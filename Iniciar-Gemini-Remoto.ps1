@@ -8,7 +8,7 @@
 # Usage: Iniciar-Gemini-Remoto.cmd [-Proveedor ngrok|tailscale] [-Dominio mi-dominio.ngrok-free.app]
 param(
   [string]$Ruta,
-  [ValidateSet('ngrok','tailscale','localhost')][string]$Proveedor = 'ngrok',
+  [ValidateSet('ngrok','tailscale','localhost')][string]$Proveedor = 'tailscale',
   [string]$Dominio = '',
   [int]$MaxMinutos = 0
 )

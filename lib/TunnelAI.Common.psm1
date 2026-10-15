@@ -1186,7 +1186,7 @@ function Start-TunnelAiRemoteSession {
     [int]$Puerto = 3001,
     [int]$MaxMinutos = 0,
     [ValidateSet('ngrok', 'tailscale', 'localhost')]
-    [string]$Proveedor = 'ngrok',
+    [string]$Proveedor = 'tailscale',
     [string]$Dominio = ''
   )
 
@@ -1238,12 +1238,19 @@ function Start-TunnelAiRemoteSession {
     $cli = Resolve-TunnelAiBin -Nombre ngrok
     if (-not $cli) { $falta = 'ngrok' }
     if ($cli -and -not (Test-TunnelAiNgrokToken)) { Set-TunnelAiNgrokToken -Ngrok $cli | Out-Null }
-  } elseif ($Proveedor -eq 'tailscale') {
+  }
+  elseif ($Proveedor -eq 'tailscale') {
     $cli = Resolve-TunnelAiBin -Nombre tailscale
     if (-not $cli) { $falta = 'tailscale' }
-    if (-not $cli) { $falta = 'tailscale' }
-  } else {
-    $cli = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
+    elseif (((& $cli status 2>&1) -join ' ') -match 'Logged out') {
+      Write-Err2 "Tailscale is installed but you are not logged in."
+      Write-Info "Run once: tailscale up   -> sign in with any account (Google works)"
+      Write-Info "Then enable Funnel at https://login.tailscale.com/admin/dns"
+      $falta = 'tailscale (sin iniciar sesion)'
+    }
+  }
+  else {
+    $cli = Resolve-TunnelAiBin -Nombre ssh
     if (-not $cli) { $falta = 'OpenSSH' }
   }
   if ($falta) {
