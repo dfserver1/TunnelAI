@@ -74,8 +74,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | File | Client / purpose | How it connects | Port |
 |---|---|---|---|
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
-| `Iniciar-Gemini-SSH.cmd` | Gemini via localhost.run | experimental | **502 outside your network** | 3001 |
-| `Iniciar-Gemini.cmd` | Gemini via Cloudflare | same tunnel | public `/mcp` URL (**SSE blocked**) | 3001 |
+| `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | Tailscale Funnel (streams SSE) + background | stable public `/mcp` URL | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
 | `Iniciar-Antigravity-Remoto.cmd` | **Antigravity via tunnel** | same tunnel as ChatGPT + Bearer → public URL | 3001 |
 | `Verificar-Entorno.cmd` | diagnostics | Node, cloudflared, packages, ports | — |
@@ -118,7 +117,7 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 > An SSH reverse tunnel streams in real time, so that is what Gemini uses. ChatGPT and Claude keep
 > using Cloudflare (plain request/response works there).
 
-1. Double-click **`Iniciar-Gemini-SSH.cmd`** → paste the folder → Enter
+1. Double-click **`Iniciar-Gemini.cmd`** → paste the folder → Enter
 2. In Gemini: `Settings → Connected Apps → Custom apps → Add a custom app` → paste the URL
 3. If it asks for credentials: `Client ID: tunnelai` · `Client Secret: tunnelai` (any value works)
 4. Gemini registers itself (OAuth 2.1 + PKCE) and you get a consent page — *TunnelAI authorizes access* → **I understand**
@@ -307,7 +306,7 @@ Measured on this project, not guessed:
 | Cloudflare **quick** tunnel | no (buffers the body until the response ends) | yes | **Gemini aborts** (`context canceled`) |
 | `localhost.run` (SSH, no account) | yes | **no (502 for everyone but you)** | **Gemini can't reach it** |
 | `serveo.net` (no account) | - | no (HTML warning page) | unusable |
-| **ngrok** (free account) | yes | yes | **works** |
+| **Tailscale Funnel** (free account) | yes | yes | **the one TunnelAI uses** |
 
-Use `Iniciar-Gemini-Remoto.cmd` (ngrok). First run asks for your free authtoken
+  It asks for the free Tailscale authtoken once and stores it, so it is a one-time step.
 (`ngrok.com` -> dashboard -> Authtoken) and stores it, so it is a one-time step.

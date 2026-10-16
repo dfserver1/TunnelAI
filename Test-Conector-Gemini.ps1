@@ -51,14 +51,14 @@ if (-not $Url) {
     Where-Object { $_.Name -eq 'ssh.exe' -and $_.CommandLine -and $_.CommandLine -match 'localhost\.run|serveo|localhost\.me' })
   if ($cfVivo.Count -eq 0 -and $sshVivo.Count -eq 0) {
     Write-Warn "No active tunnel detected — this URL belongs to a CLOSED session (the log keeps the last one)."
-    Write-Warn "Run Iniciar-Gemini-SSH.cmd and try again to get the live URL."
+    Write-Warn "Run Iniciar-Gemini.cmd and try again to get the live URL."
     Read-Host "Press Enter" | Out-Null; exit 1
   }
   if ($Url -match 'trycloudflare') {
     Write-Ok "Active tunnel detected (Cloudflare quick tunnel)."
     Write-Warn "Cloudflare quick tunnels BUFFER streaming responses: Gemini speaks SSE and will"
     Write-Warn "never get the 'endpoint' frame (it gives up after ~10 s with 'context canceled')."
-    Write-Warn "For Gemini use Iniciar-Gemini-SSH.cmd instead — it streams in real time."
+    Write-Warn "For Gemini use Iniciar-Gemini.cmd instead — it streams in real time."
   } else {
     Write-Ok "Active tunnel detected (SSH, streaming) — the right one for Gemini."
   }
@@ -93,7 +93,7 @@ if (-not $curlOkSse) {
     Write-Err2 "GET /mcp -> 0 bytes: the tunnel is buffering the SSE stream."
     Write-Err2 "Cloudflare quick tunnels do this by design: they forward the body only when"
     Write-Err2 "the response ENDS, so Gemini never sees 'endpoint' and aborts after ~10 s."
-    Write-Info "Fix: start Iniciar-Gemini-SSH.cmd (real streaming tunnel)."
+    Write-Info "Fix: start Iniciar-Gemini.cmd (real streaming tunnel)."
   } else {
     Write-Err2 "GET /mcp -> $bytes bytes but no 'event: endpoint' frame."
   }
@@ -213,7 +213,7 @@ Write-Host "   5. Gemini Spark access (custom apps reportedly run inside Spark t
 Write-Host ""
 Write-Host "── Exact steps (a Gem CANNOT be connected directly) ──" -ForegroundColor Cyan
 Write-Host "   The MCP link is configured at the ACCOUNT level, then used by your Gem:"
-Write-Host "   1. Keep Iniciar-Gemini-SSH.cmd running (Gemini needs a streaming tunnel)"
+Write-Host "   1. Keep Iniciar-Gemini.cmd running (Gemini needs a streaming tunnel)"
 Write-Host "   2. gemini.google.com -> Settings -> Connected Apps -> Custom apps -> Add"
 Write-Host "   3. Paste: $Url"
 Write-Host "   4. Open your Gem (e.g. Argon) and enable the connected app in its tools/settings"

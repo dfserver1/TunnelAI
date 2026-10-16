@@ -620,7 +620,7 @@ function Show-TunnelAiInstrucciones {
       if (-not $esStreaming) {
         Write-Warn "This URL goes through a Cloudflare quick tunnel."
         Write-Warn "Cloudflare BUFFERS streaming responses and Gemini needs SSE (it waits"
-        Write-Info "For Gemini use Iniciar-Gemini-Remoto.cmd (Tailscale Funnel or ngrok)."
+        Write-Info "For Gemini run Iniciar-Gemini.cmd (it uses Tailscale Funnel)."
       }
       Write-Host "  Gemini (gemini.google.com) -> Settings -> Connected Apps -> Custom apps" -ForegroundColor White
       Write-Host "    Add a custom app: paste the URL   ·   $Url" -ForegroundColor DarkGray
@@ -798,7 +798,7 @@ function Start-TunnelAiSession {
   if ($Cliente -eq 'Gemini' -and $info.UsaTunel) {
     Write-Warn "NOTE: Gemini needs a STREAMING tunnel. Cloudflare quick tunnels buffer SSE"
     Write-Warn "responses, so Gemini will not connect through this URL."
-    Write-Info "For Gemini use Iniciar-Gemini-SSH.cmd (Cloudflare is fine for ChatGPT/Claude)."
+    Write-Info "For Gemini use Iniciar-Gemini.cmd (Cloudflare is fine for ChatGPT/Claude)."
   }
   $titulo = switch ($Cliente) {
     'ChatGPT'     { 'TunnelAI - ChatGPT -> your PC' }
@@ -981,211 +981,6 @@ function Start-TunnelAiSession {
   }
 }
 
-function Start-TunnelAiSshSession {
-  <#
-    Gemini session over an SSH tunnel (localhost.run).
-
-    Why not Cloudflare? Gemini web speaks the LEGACY MCP HTTP+SSE transport: it opens
-    GET /mcp and keeps a long-lived stream open. Cloudflare quick tunnels buffer
-    streaming responses until they END, so the client never receives the `endpoint`
-    frame, waits ~10 s and drops the request ("context canceled"). Verified with a
-    minimal SSE server: 2.9 KB local, 0 bytes through a quick tunnel.
-    An SSH reverse tunnel streams in real time, so it is the only option here that
-    works for Gemini. ChatGPT/Claude keep using Cloudflare (plain request/response).
-  #>
-  param(
-    [string]$Ruta,
-    [int]$Puerto = 3001,
-    [int]$MaxMinutos = 0,
-    [string]$HostTunel = 'localhost.run'
-  )
-
-  Write-Host ""
-  Write-Host "TunnelAI - Gemini -> your PC (SSH tunnel, streaming)" -ForegroundColor Cyan
-  Write-Host "Cloudflare quick tunnels block SSE, which Gemini needs; this launcher uses SSH." -ForegroundColor DarkGray
-  Write-Host ""
-
-  Assert-TunnelAiNode
-  Assert-ChatGptLocalMcp
-  Install-TunnelAiPatches
-
-  # a Cloudflare session on the same port would block us: explain and offer to free it
-  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 3) {
-    $urlActiva = Get-TunnelUrlActual
-    Write-Warn "A session is already active on port $Puerto. Not starting a second one."
-    $urlVivaSsh = $null
-    $logSshPrev = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
-    if (Test-Path -LiteralPath $logSshPrev) {
-      $mm = Select-String -LiteralPath $logSshPrev -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' -AllMatches |
-           ForEach-Object { $_.Matches } |
-           Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
-      if ($mm) { $urlVivaSsh = "$($mm.Value)/mcp" }
-    }
-    if (-not $urlVivaSsh) { $urlVivaSsh = Get-TunnelUrlActual }
-    if ($urlVivaSsh) {
-      Write-Host ""
-      if ($urlVivaSsh -match 'trycloudflare') {
-        Write-Warn "That session uses Cloudflare, which cannot stream SSE (Gemini needs it)."
-      }
-      Write-Ok "That session is live, use its URL: $urlVivaSsh"
-      Copy-TunnelAiUrl -Url $urlVivaSsh
-      Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlVivaSsh
-    } else {
-      Write-Info "I could not recover its URL from the logs. Close the other TunnelAI window."
-    }
-    Write-Info "To start a fresh session: run Limpiar-Bloqueo.cmd first."
-    Read-Host "Press Enter to close this window" | Out-Null
-    return
-  }
-
-  $Ruta = Read-TunnelAiRuta -Ruta $Ruta
-  $pidsOcupando = @(Get-TunnelAiPortPids -Puerto $Puerto)
-  if ($pidsOcupando.Count -gt 0) { Stop-TunnelAiPuerto -Puerto $Puerto | Out-Null }
-
-  Write-Host ""
-  Write-Ok "Exposed folder: $Ruta"
-  Write-Info "LOCAL mode on 127.0.0.1:$Puerto (not exposed to your LAN)"
-  if ($MaxMinutos -gt 0) { Write-Info "Auto-close enabled: the tunnel stops after $MaxMinutos minute(s)." }
-  Write-Host ""
-
-  $sshLog = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
-  Remove-Item -LiteralPath $sshLog -ErrorAction SilentlyContinue
-
-  # ── 1) SSH tunnel (started first so the URL appears as soon as it is ready) ──
-  $sshExe = (Get-Command ssh.exe -ErrorAction SilentlyContinue).Source
-  if (-not $sshExe) { $sshExe = (Get-Command ssh -ErrorAction SilentlyContinue).Source }
-  if (-not $sshExe) {
-    Write-Err2 "OpenSSH client not found. Install it: Settings -> Apps -> Optional features -> OpenSSH Client."
-    Read-Host "Press Enter" | Out-Null; return
-  }
-
-  Write-Info "Starting the SSH tunnel to $HostTunel (no account needed)..."
-  $sshProc = Start-Process -FilePath $sshExe -WindowStyle Hidden -PassThru -RedirectStandardOutput $sshLog -RedirectStandardError "$sshLog.err" -ArgumentList @(
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'ServerAliveInterval=30',
-    '-o', 'ServerAliveCountMax=3',
-    '-R', "80:127.0.0.1:$Puerto",
-    "nokey@$HostTunel"
-  )
-
-  $url = $null
-  for ($i = 0; $i -lt 40 -and -not $url; $i++) {
-    Start-Sleep -Seconds 1
-    if (Test-Path -LiteralPath $sshLog) {
-      $m = Select-String -LiteralPath $sshLog -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}\.[a-zA-Z0-9\-]+\.[a-zA-Z]{2,})' -AllMatches -ErrorAction SilentlyContinue |
-           ForEach-Object { $_.Matches } | Select-Object -Last 1
-      if ($m -and $m.Value -notmatch 'localhost\.run') { $url = $m.Value }
-    }
-    if (-not $url -and $sshProc.HasExited) { break }
-  }
-
-  if (-not $url) {
-    Write-Err2 "The SSH tunnel did not return a public URL (see $sshLog)."
-    Write-Info "Check your internet connection and try again."
-    try { Stop-Process -Id $sshProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-    Read-Host "Press Enter" | Out-Null; return
-  }
-
-  # ── 2) MCP server, local only ──
-  $env:AI_PC_MCP_HOST = '127.0.0.1'
-  $env:AI_PC_MCP_PORT = "$Puerto"
-  $mcpLog = Join-Path $env:TEMP "tunnelai-sse-mcp-$Puerto.log"
-
-  Write-Ok "Tunnel established: $url"
-  Write-Info "Starting the MCP server (local, streamed through SSH)..."
-  $server = Start-Process -FilePath 'pwsh' -WindowStyle Hidden -PassThru -RedirectStandardOutput $mcpLog -RedirectStandardError "$mcpLog.err" -ArgumentList @(
-    '-NoProfile', '-Command',
-    "Set-Location -LiteralPath '$Ruta'; `$env:AI_PC_MCP_HOST='127.0.0.1'; `$env:AI_PC_MCP_PORT='$Puerto'; chatgpt-local-mcp --no-tunnel --log"
-  )
-
-  if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 45) {
-    Write-Ok "MCP server responding on 127.0.0.1:$Puerto"
-  } else {
-    Write-Warn "The server did not answer in time; see $mcpLog"
-  }
-
-  $urlMcp = "$url/mcp"
-  Copy-TunnelAiUrl -Url $urlMcp
-  Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url $urlMcp
-  Write-Info "This URL changes on every run (free random domain)."
-  Write-Info "If Gemini still refuses, run Test-Conector-Gemini.cmd: it verifies the SSE handshake."
-  Start-TunnelAiVigia -Puerto $Puerto -Servidor 'chatgpt-local-mcp'
-
-  Write-Host ""
-  Write-Host "── LIVE (Ctrl+C to close) ──" -ForegroundColor Cyan
-  Write-Host ""
-
-  $limite = if ($MaxMinutos -gt 0) { (Get-Date).AddMinutes($MaxMinutos) } else { $null }
-  $urlActual = $url
-  $curlProbe = (Get-Command curl.exe -ErrorAction SilentlyContinue).Source
-  $tick = 0
-  try {
-    while ($true) {
-      Start-Sleep -Seconds 2
-      if ($sshProc.HasExited) { Write-Warn "The SSH tunnel closed."; break }
-      if ($limite -and (Get-Date) -gt $limite) { Write-Info "Auto-close time reached."; break }
-
-      # every ~30 s: localhost.run sometimes drops the forwarding while ssh stays alive (502).
-      # Detect it and rebuild the tunnel instead of leaving Gemini with a dead URL.
-      $tick++
-      if (($tick % 15) -eq 0) {
-        $code = ""
-        if ($curlProbe) {
-          try { $code = ((& $curlProbe -s -o NUL -w '%{http_code}' --max-time 10 "$urlActual/" 2>&1) -join '').Trim() } catch { $code = "" }
-        }
-        # Only rebuild the TUNNEL when the local server is fine but the public URL is not:
-        # if the local server is down, the sentinel repairs it and the tunnel is still good.
-        if ($code -ne "200") {
-          if (Test-McpResponde -Puerto $Puerto -TimeoutSeg 3) {
-            Write-Warn "The public tunnel stopped answering (HTTP $code) while the local server is fine."
-            Write-Warn "Rebuilding the tunnel..."
-          try { Stop-Process -Id $sshProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-          Start-Sleep -Seconds 2
-          $log2 = Join-Path $env:TEMP "tunnelai-ssh-$Puerto.log"
-          Remove-Item -LiteralPath $log2 -ErrorAction SilentlyContinue
-          $sshProc = Start-Process -FilePath $sshExe -WindowStyle Hidden -PassThru -RedirectStandardOutput $log2 -RedirectStandardError "$log2.err" -ArgumentList @(
-            '-o', 'StrictHostKeyChecking=no',
-            '-o', 'ServerAliveInterval=30',
-            '-o', 'ServerAliveCountMax=3',
-            '-R', "80:127.0.0.1:$Puerto",
-            "nokey@$HostTunel"
-          )
-          $urlNueva = $null
-          for ($i = 0; $i -lt 45 -and -not $urlNueva; $i++) {
-            Start-Sleep -Seconds 1
-            if (Test-Path -LiteralPath $log2) {
-              $mm = Select-String -LiteralPath $log2 -Pattern 'https://([a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' -AllMatches |
-                   ForEach-Object { $_.Matches } |
-                   Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
-              if ($mm) { $urlNueva = $mm.Value }
-            }
-          }
-          if ($urlNueva) {
-            $urlActual = $urlNueva
-            Write-Host ""
-            Write-Ok "New tunnel URL: $urlNueva/mcp"
-            Copy-TunnelAiUrl -Url "$urlNueva/mcp"
-            Show-TunnelAiInstrucciones -Cliente 'Gemini' -Url "$urlNueva/mcp"
-            Write-Info "IMPORTANT: the URL changed - paste the new one in Gemini (Settings -> Connected Apps)."
-            Write-Info "Quick check: Test-Conector-Gemini.cmd"
-          } else {
-            Write-Err2 "Could not get a new URL - check the internet connection."
-            break
-          }
-          }
-        }
-      }
-    }
-  } finally {
-    Write-Host ""
-    Write-Info "Closing the SSH tunnel and the MCP server..."
-    Stop-TunnelAiVigia
-    try { Stop-Process -Id $sshProc.Id -Force -ErrorAction SilentlyContinue } catch {}
-    try { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue } catch {}
-    Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
-    Write-Ok "Processes finished cleanly."
-  }
-}
 function Start-TunnelAiRemoteSession {
   <#
     Gemini session over a RELIABLE streaming tunnel.
