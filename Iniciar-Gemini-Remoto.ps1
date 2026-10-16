@@ -10,7 +10,8 @@ param(
   [string]$Ruta,
   [ValidateSet('ngrok','tailscale','localhost')][string]$Proveedor = 'tailscale',
   [string]$Dominio = '',
-  [int]$MaxMinutos = 0
+  [int]$MaxMinutos = 0,
+  [switch]$Desatacado
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,4 +21,4 @@ for ($i = 1; $i -le 3; $i++) {
   catch { if ($i -eq 3) { Write-Host "No pude cargar el modulo: $($_.Exception.Message)" -ForegroundColor Red; Read-Host "Pulsa Enter"; exit 1 }; Start-Sleep 2 }
 }
 
-Start-TunnelAiRemoteSession -Ruta $Ruta -Proveedor $Proveedor -Dominio $Dominio -MaxMinutos $MaxMinutos
+Start-TunnelAiRemoteSession -Ruta $Ruta -Proveedor $Proveedor -Dominio $Dominio -MaxMinutos $MaxMinutos -Desatacado:$Desatacado

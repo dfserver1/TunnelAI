@@ -621,7 +621,6 @@ function Show-TunnelAiInstrucciones {
         Write-Warn "This URL goes through a Cloudflare quick tunnel."
         Write-Warn "Cloudflare BUFFERS streaming responses and Gemini needs SSE (it waits"
         Write-Info "For Gemini use Iniciar-Gemini-Remoto.cmd (Tailscale Funnel or ngrok)."
-        Write-Info "For Gemini use Iniciar-Gemini-SSH.cmd (real streaming tunnel)."
       }
       Write-Host "  Gemini (gemini.google.com) -> Settings -> Connected Apps -> Custom apps" -ForegroundColor White
       Write-Host "    Add a custom app: paste the URL   ·   $Url" -ForegroundColor DarkGray
@@ -705,14 +704,34 @@ function Set-AntigravityConfigRemoto {
 }
 # ── 10c) recover the current quick-tunnel URL from cloudflared's log ───────────
 function Get-TunnelUrlActual {
+  # Prefer the tunnel that is actually running now (never a stale URL from the logs).
+  # 1) Tailscale Funnel  2) ngrok  3) last URL seen in the logs (fallback)
+  $ts = Resolve-TunnelAiBin -Nombre tailscale
+  if ($ts) {
+    try {
+      $st = (& $ts funnel status 2>&1) -join ' '
+      if ($st -match '(https://[a-zA-Z0-9\-\.]+\.ts\.net)') { return "$($Matches[1])/mcp" }
+    } catch {}
+  }
+  $ng = Resolve-TunnelAiBin -Nombre ngrok
+  if ($ng) {
+    try {
+      $api = (& $ng api requests list --format json 2>$null) -join ' '
+      if ($api -match '(https://[a-zA-Z0-9\-\.]+\.(?:ngrok-free\.app|ngrok\.app|ngrok\.io|ngrok-free\.dev))') {
+        return "$($Matches[1])/mcp"
+      }
+    } catch {}
+  }
   $logs = @(
+    (Join-Path $env:TEMP 'tunnelai-tunel-ngrok-3001.log'),
     (Join-Path $env:USERPROFILE '.chatgpt-local-mcp\logs\cloudflared.log'),
     (Join-Path $env:USERPROFILE '.chatgpt-local-mcp\logs\server.log')
   )
   foreach ($lg in $logs) {
     if (Test-Path -LiteralPath $lg) {
-      $m = Select-String -LiteralPath $lg -Pattern '(https://[a-zA-Z0-9-]+\.trycloudflare\.com)' -AllMatches |
-           ForEach-Object { $_.Matches } | Select-Object -Last 1
+      $m = Select-String -LiteralPath $lg -Pattern '(https://[a-zA-Z0-9][a-zA-Z0-9\-]{2,}(\.[a-zA-Z0-9\-]+)+)' -AllMatches |
+           ForEach-Object { $_.Matches } |
+           Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
       if ($m) { return "$($m.Value)/mcp" }
     }
   }
@@ -1187,7 +1206,8 @@ function Start-TunnelAiRemoteSession {
     [int]$MaxMinutos = 0,
     [ValidateSet('ngrok', 'tailscale', 'localhost')]
     [string]$Proveedor = 'tailscale',
-    [string]$Dominio = ''
+    [string]$Dominio = '',
+    [switch]$Desatacado
   )
 
   $tunel = switch ($Proveedor) {
@@ -1281,9 +1301,18 @@ function Start-TunnelAiRemoteSession {
   }
 
   Write-Info "Starting the $Proveedor tunnel..."
-  $procTunel = Start-Process -FilePath $cli -WindowStyle Hidden -PassThru -RedirectStandardOutput $tunelLog -RedirectStandardError "$tunelLog.err" -ArgumentList $argsTunel
-
   $url = $null
+  $procTunel = $null
+  if ($Proveedor -eq 'tailscale') {
+    # --bg keeps the funnel inside the Tailscale service: it survives this window
+    $salida = (& $cli funnel --bg "$Puerto" 2>&1) -join [Environment]::NewLine
+    if ($salida -match '(https://[a-zA-Z0-9\-\.]+\.ts\.net)') { $url = $Matches[1] }
+    Write-Host ($salida.Trim())
+  }
+  else {
+    $procTunel = Start-Process -FilePath $cli -WindowStyle Hidden -PassThru -RedirectStandardOutput $tunelLog -RedirectStandardError "$tunelLog.err" -ArgumentList $argsTunel
+  }
+
   $patronUrl = switch ($Proveedor) {
     'ngrok'     { '(https://[a-zA-Z0-9\-\.]+\.(?:ngrok-free\.app|ngrok\.app|ngrok\.io|ngrok-free\.dev))' }
     'tailscale' { '(https://[a-zA-Z0-9\-\.]+\.ts\.net)' }
@@ -1297,7 +1326,7 @@ function Start-TunnelAiRemoteSession {
            Where-Object { $_.Value -notmatch 'localhost\.run|docs' } | Select-Object -Last 1
       if ($mm) { $url = $mm.Value }
     }
-    if (-not $url -and $procTunel.HasExited) { break }
+    if (-not $url -and $procTunel -and $procTunel.HasExited) { break }
   }
 
   if (-not $url) {
@@ -1328,6 +1357,14 @@ function Start-TunnelAiRemoteSession {
   Start-TunnelAiVigia -Puerto $Puerto -Servidor 'chatgpt-local-mcp'
 
   Write-Host ""
+  if ($Desatacado) {
+    Write-Host ""
+    Write-Ok "Running in the background: you can close this window."
+    Write-Info "The tunnel lives in the Tailscale service and the MCP server runs hidden."
+    Write-Info "To stop everything: run Limpiar-Bloqueo.cmd"
+    return
+  }
+
   Write-Host "--- LIVE (Ctrl+C to close) ---" -ForegroundColor Cyan
   Write-Host ""
 
@@ -1335,17 +1372,32 @@ function Start-TunnelAiRemoteSession {
   try {
     while ($true) {
       Start-Sleep -Seconds 2
-      if ($procTunel.HasExited) { Write-Warn "The $Proveedor tunnel closed."; break }
+      if ($Proveedor -eq 'tailscale') {
+        # the funnel lives in the Tailscale service; check it and bring it back if it drops
+        $st2 = (& $cli funnel status 2>&1) -join ' '
+        if ($st2 -notmatch 'Funnel on') {
+          Write-Warn "The funnel was off - restarting it..."
+          try { (& $cli funnel --bg "$Puerto" 2>&1) | Out-Null } catch {}
+          Start-Sleep 3
+        }
+      }
+      elseif ($procTunel -and $procTunel.HasExited) { Write-Warn "The $Proveedor tunnel closed."; break }
       if ($limite -and (Get-Date) -gt $limite) { Write-Info "Auto-close time reached."; break }
     }
   } finally {
-    Write-Host ""
-    Write-Info "Closing the tunnel and the MCP server..."
-    Stop-TunnelAiVigia
-    try { Stop-Process -Id $procTunel.Id -Force -ErrorAction SilentlyContinue } catch {}
-    try { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue } catch {}
-    Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
-    Write-Ok "Processes finished cleanly."
+    if ($Desatacado) {
+      Write-Host ""
+      Write-Info "Still running in the background (stop it with Limpiar-Bloqueo.cmd)."
+    }
+    else {
+      Write-Host ""
+      Write-Info "Closing the tunnel and the MCP server..."
+      Stop-TunnelAiVigia
+      try { if ($procTunel) { Stop-Process -Id $procTunel.Id -Force -ErrorAction SilentlyContinue } } catch {}
+      try { if ($server) { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue } } catch {}
+      Stop-TunnelAiServidor -Puerto $Puerto -PatronServidor 'chatgpt-local-mcp' | Out-Null
+      Write-Ok "Processes finished cleanly."
+    }
   }
 }
 function Resolve-TunnelAiBin {
