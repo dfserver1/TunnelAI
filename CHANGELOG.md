@@ -3,6 +3,37 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.5.0] — 2026-10-18
+
+### Added
+- **Durable tunnel**: the Gemini tunnel now runs with `tailscale funnel --bg`, inside the Tailscale
+  service instead of a foreground process. Measured: 0 foreground processes and the session still
+  serving — closing the launcher window no longer kills the tunnel.
+- **Detached mode** (the default for `Iniciar-Gemini.cmd`): starts the MCP server, the sentinel and
+  the tunnel, prints the URL and exits. Close the window and everything keeps running; `-Ventana`
+  keeps the live session visible instead. `Limpiar-Bloqueo.cmd` stops it all.
+- The live loop watches `tailscale funnel status` and re-establishes the funnel if it ever drops
+  (network changes, Tailscale service restarts).
+
+### Changed
+- **One Gemini launcher**: `Iniciar-Gemini.cmd` is now the only one and uses **Tailscale Funnel**,
+  the only provider of the four tested that streams SSE, serves no interstitial to browsers and
+  keeps a stable URL. It replaces the three variants (Cloudflare / localhost.run / ngrok) that
+  could not work.
+- "Session already running" now shows the URL of the tunnel that is actually live (Tailscale first,
+  then ngrok) and only falls back to the logs, so it can no longer display a stale URL.
+
+### Removed
+- `Iniciar-Gemini-SSH.cmd` / `.ps1` — `localhost.run` answers 502 to everyone outside your network,
+  so Google can never reach it.
+- `Iniciar-Gemini-Remoto.cmd` / `.ps1` — ngrok's free tier serves a browser-warning interstitial to
+  browser user-agents (Gemini sends one) and the free tier cannot disable it.
+- The dead `Start-TunnelAiSshSession` helper.
+
+### Fixed
+- The Cloudflare streaming warning no longer appears for Tailscale/ngrok URLs: it only fires for
+  `trycloudflare.com` URLs now.
+
 ## [1.4.0] — 2026-10-15
 
 ### Fixed

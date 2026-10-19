@@ -1,4 +1,4 @@
-# TunnelAI — portable AI-to-PC bridge (MCP over Cloudflare tunnel)
+# TunnelAI — portable AI-to-PC bridge (MCP over Cloudflare or Tailscale tunnels)
 
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="MIT License"></a>
@@ -38,7 +38,8 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 - **4 assistants, one PC**: ChatGPT, Claude, Gemini (web/mobile) and Antigravity — tunneled or 100% local.
 - **15 ready-to-use skills**: the AI becomes an auditor, web developer, **offline OCR reader** (invoices, scans, screenshots), project onboarding guide, dependency/secret watchdog, documenter, **package installer (npm/pip/dotnet/winget…)**, legacy-code migrator, performance profiler, WCAG accessibility auditor, data analyst, QA engineer, SEO specialist, **PDF report generator** and **architecture diagram generator** (Mermaid renders natively on GitHub).
 - **Self-healing sentinel**: probes the MCP server every 20 s, detects crashes, bottlenecks and *installations in progress*, and repairs **without killing the tunnel or your processes**.
-- **Stable URL option**: named Cloudflare tunnel (your domain) so the URL never changes.
+- **Close the window, keep working**: detached mode leaves the MCP server, the sentinel and the Gemini tunnel running in the background — the tunnel lives inside the Tailscale service and repairs itself if it ever drops.
+- **Stable URL**: **Tailscale Funnel** (free, Gemini — never changes) or a named Cloudflare tunnel on your own domain.
 - **Security first**: folder-scoped, server bound to `127.0.0.1`, optional Bearer token, cleanup that never kills global node/dotnet processes.
 
 ### Why not just copy files into the chat?
@@ -59,7 +60,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | Automation / launchers / tools | **PowerShell** (`.ps1`, Windows PowerShell 5.1 + 7+, Win32/WinRT: `Get-CimInstance`, `Windows.Media.Ocr`, `TcpListener`) |
 | Windows entry points | **Batch** (`.cmd` wrappers, double-click ready) |
 | MCP servers (upstream) | **Node.js / JavaScript** — `chatgpt-local-mcp`, `expose-files-mcp` (npm, ESM), patched at runtime by TunnelAI |
-| Tunnel | **cloudflared** (Go binary) — quick tunnels or named tunnels via `config.yml` |
+| Tunnel | **cloudflared** (Go binary) — quick tunnels or named tunnels via `config.yml`; **Tailscale Funnel** for Gemini (streaming) |
 | Protocol | **MCP** (Model Context Protocol) over Streamable HTTP (`/mcp`) |
 | OCR engine | **WinRT** (`Windows.Media.Ocr`) — offline, no cloud API |
 | PDF export | **Edge/Chrome headless** (`--print-to-pdf`) |
@@ -74,7 +75,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 | File | Client / purpose | How it connects | Port |
 |---|---|---|---|
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
-| `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | Tailscale Funnel (streams SSE) + background | stable public `/mcp` URL | 3001 |
+| `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | Tailscale Funnel (streams SSE), detached mode | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
 | `Iniciar-Antigravity-Remoto.cmd` | **Antigravity via tunnel** | same tunnel as ChatGPT + Bearer → public URL | 3001 |
 | `Verificar-Entorno.cmd` | diagnostics | Node, cloudflared, packages, ports | — |
@@ -108,25 +109,37 @@ Agregar-Skill.cmd todas                          # install all 15 skills
 2. Paste the folder → Enter
 3. In ChatGPT: `Settings → Connectors → Add connector → MCP` → Authentication: **No Auth** → paste the URL.
 
-### Gemini (gemini.google.com) — needs the SSH launcher
+### Gemini (gemini.google.com) — needs Tailscale Funnel
 
 > **Important**: Gemini speaks the **legacy MCP HTTP+SSE transport** (it opens `GET /mcp` and keeps
-> a long-lived stream). Cloudflare quick tunnels **buffer streaming responses until they end**, so
-> Gemini never receives the `endpoint` frame and aborts after ~10 s with `context canceled`.
-> Measured with a minimal SSE server: 2.9 KB locally, **0 bytes** through a quick tunnel.
-> An SSH reverse tunnel streams in real time, so that is what Gemini uses. ChatGPT and Claude keep
-> using Cloudflare (plain request/response works there).
+> a long-lived stream), so its tunnel must stream in real time — most do not (see the table below).
+> **Tailscale Funnel** streams, serves no interstitial and keeps a **stable URL**: that is the one
+> TunnelAI uses. ChatGPT and Claude keep using Cloudflare (plain request/response works there).
 
 1. Double-click **`Iniciar-Gemini.cmd`** → paste the folder → Enter
-2. In Gemini: `Settings → Connected Apps → Custom apps → Add a custom app` → paste the URL
-3. If it asks for credentials: `Client ID: tunnelai` · `Client Secret: tunnelai` (any value works)
-4. Gemini registers itself (OAuth 2.1 + PKCE) and you get a consent page — *TunnelAI authorizes access* → **I understand**
-5. Requirements: **personal** Google account (not Workspace/school), **Keep Activity** on, US region.
+   The first time it walks you through the free Tailscale client (install → log in → enable Funnel).
+2. It copies the URL to the clipboard and **you can close the window**: the tunnel lives inside the
+   Tailscale service and the MCP server runs detached (use `-Ventana` to watch the live session).
+3. In Gemini: `Settings → Connected Apps → Custom apps → Add a custom app` → paste the URL
+4. If it asks for credentials: `Client ID: tunnelai` · `Client Secret: tunnelai` (any value works)
+5. Gemini registers itself (OAuth 2.1 + PKCE) and you get a consent page — *TunnelAI authorizes access* → **I understand**
+6. Requirements: **personal** Google account (not Workspace/school), **Keep Activity** on, US region.
 
 Run `Test-Conector-Gemini.cmd` at any time: it verifies the MCP handshake **and** the whole OAuth flow
 (discovery → registration → consent → token → 53 tools), so you can tell our side from Google's.
 
-> `Iniciar-Gemini.cmd` (Cloudflare) still exists for testing, but Gemini will not connect through it: use the SSH launcher.
+**Which tunnel actually works (measured, not guessed):**
+
+| Tunnel | Streaming (SSE) | Reachable from Google | Verdict |
+|---|---|---|---|
+| Cloudflare **quick** tunnel | no (buffers the body until the response ends) | yes | **Gemini aborts** (`context canceled`) |
+| `localhost.run` (SSH, no account) | yes | **no (502 for everyone but you)** | **Gemini can't reach it** |
+| `serveo.net` (no account) | - | no (HTML warning page) | unusable |
+| **ngrok** (free tier) | yes | yes, but serves an interstitial to browsers | **Gemini's browser user-agent is blocked** |
+| **Tailscale Funnel** (free account) | yes | yes | **the one TunnelAI uses** |
+
+> Tailscale is free for personal use and the login lives in the Tailscale client — TunnelAI never
+> stores any token. The URL is stable: `https://<machine>.<tailnet>.ts.net/mcp`.
 
 ### Claude
 1. Double-click `Iniciar-Claude.cmd` (**not** the ChatGPT one)
@@ -233,7 +246,7 @@ The launcher writes the `Authorization: Bearer` header into `mcp_config.json` an
 
 ## The sentinel (Monitor-TunnelAI)
 
-It opens **automatically, minimized**, as soon as the tunnel is ready, and closes when you close the tunnel window. You can also run it standalone: `Monitor-TunnelAI.cmd [port]`.
+It opens **automatically, minimized**, as soon as the tunnel is ready, and runs until you stop the session (closing the window, `Ctrl+C`, or `Limpiar-Bloqueo.cmd` in detached mode). You can also run it standalone: `Monitor-TunnelAI.cmd [port]`.
 
 Every 20 seconds it:
 - ✓ **Probes the MCP** (real `initialize`) and measures latency in ms
@@ -294,19 +307,3 @@ never commit it, and prefer `gh auth login` (`winget install GitHub.cli`) when p
 
 **MIT** — free to use, modify and distribute, including commercially, without warranty.
 Copyright (c) 2026 **Omar Pajares**. See [LICENSE](LICENSE).
-
-## Publishing your own fork (optional)
-
-### Gemini: which tunnel actually works
-
-Measured on this project, not guessed:
-
-| Tunnel | Streaming (SSE) | Reachable from Google | Verdict |
-|---|---|---|---|
-| Cloudflare **quick** tunnel | no (buffers the body until the response ends) | yes | **Gemini aborts** (`context canceled`) |
-| `localhost.run` (SSH, no account) | yes | **no (502 for everyone but you)** | **Gemini can't reach it** |
-| `serveo.net` (no account) | - | no (HTML warning page) | unusable |
-| **Tailscale Funnel** (free account) | yes | yes | **the one TunnelAI uses** |
-
-  It asks for the free Tailscale authtoken once and stores it, so it is a one-time step.
-(`ngrok.com` -> dashboard -> Authtoken) and stores it, so it is a one-time step.
