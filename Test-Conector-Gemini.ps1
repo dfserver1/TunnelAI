@@ -81,7 +81,7 @@ if (-not $curlOkSse) {
   Remove-Item -LiteralPath $sseOut -ErrorAction SilentlyContinue
   $sp = Start-Process -FilePath (Get-Command curl.exe).Source -WindowStyle Hidden -PassThru `
     -RedirectStandardOutput $sseOut `
-    -ArgumentList @('-sN', '--max-time', '12', '-H', 'Accept: text/event-stream', "$BaseSse/mcp")
+    -ArgumentList @('-sN', '--max-time', '12', '-H', 'Accept:text/event-stream', "$BaseSse/mcp")
   Start-Sleep -Seconds 5
   $cabecera = Get-Content -LiteralPath $sseOut -Raw -ErrorAction SilentlyContinue
   $bytes = if ($cabecera) { $cabecera.Length } else { 0 }

@@ -3,6 +3,14 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.1] — 2026-10-20
+
+### Fixed
+- `Test-Conector-Gemini` gave a false negative in the SSE check: `Start-Process` split the
+  `Accept: text/event-stream` header on the space, so curl sent an empty Accept and received the
+  JSON banner. The header is now sent without a space (`Accept:text/event-stream`) and the SSE
+  check passes on a healthy tunnel.
+
 ## [1.6.0] — 2026-10-19
 
 ### Added
