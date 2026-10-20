@@ -3,6 +3,23 @@
 All notable changes to TunnelAI are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [1.6.0] — 2026-10-19
+
+### Added
+- **`TunnelAI.cmd` — one menu for every assistant.** Pick 1-7 and it creates the right session:
+  ChatGPT (Cloudflare), Gemini (Tailscale Funnel, detached), Claude (Cloudflare), Antigravity
+  (local) or Antigravity remote (shared tunnel + Bearer). Options 6 and 7 verify and stop everything.
+- The menu installs the **15 skills** into the exposed folder before opening the tunnel (default on,
+  toggle with `s`), so the AI reads `TUNNELAI-SKILL-*.md` through that same tunnel.
+- `TunnelAI.ps1` accepts `-Opcion <n> -Ruta <folder> [-SinSkills]` for shortcuts and scripts, plus
+  `-Ventana` for a watched Gemini session.
+- `Agregar-Skill.ps1 -Silencioso`: installs without the clipboard copy and without the final pause,
+  so the menu can call it unattended.
+
+### Changed
+- `Limpiar-Bloqueo.cmd` now also turns off the **Tailscale Funnel** when it points at one of our
+  ports (3001/3002/3003), so "stop everything" really stops everything.
+
 ## [1.5.0] — 2026-10-18
 
 ### Added

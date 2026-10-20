@@ -74,6 +74,7 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 
 | File | Client / purpose | How it connects | Port |
 |---|---|---|---|
+| `TunnelAI.cmd` | **menu for everything** | pick an assistant → creates its tunnel + installs the skills | 3001-3003 |
 | `Iniciar-TunnelAI.cmd` | **ChatGPT** | cloudflared quick tunnel → public `/mcp` URL | 3001 |
 | `Iniciar-Gemini.cmd` | **Gemini** (web/mobile) | Tailscale Funnel (streams SSE), detached mode | 3001 |
 | `Iniciar-Claude.cmd` | **Claude** | cloudflared quick tunnel → public `/mcp` URL | 3002 |
@@ -91,16 +92,37 @@ Copies to any PC, sets itself up (Node, cloudflared), asks for a folder, and han
 ## Quick start
 
 1. **Requirements**: Windows 10/11, **Node 18+** (https://nodejs.org). Internet needed only the first time.
-2. Double-click the launcher for your assistant, paste a folder path, press Enter.
-3. Copy the `/mcp` URL (it's copied to your clipboard automatically) and paste it into your assistant.
-4. Optional: `Agregar-Skill.cmd` → install a skill → tell the AI *"Read TUNNELAI-SKILL-auditoria.md and run the audit on the root"*.
+2. Double-click **`TunnelAI.cmd`** — one menu for every assistant — and pick 1-5.
+   Paste the folder once: it installs the 15 skills there and creates the right tunnel.
+3. Paste the URL into your assistant (it's copied to your clipboard automatically); see
+   *Using each assistant* below for where.
+4. Keep the window open for ChatGPT/Claude/Antigravity; Gemini runs detached (close it).
 
 ```powershell
+TunnelAI.cmd                                     # the menu (recommended)
+TunnelAI.cmd -Opcion 2 -Ruta C:\Proyectos\MiApp  # non-interactive: Gemini, with skills
+TunnelAI.cmd -Opcion 1 -Ruta C:\Proyectos\MiApp -SinSkills
 Verificar-Entorno.cmd                            # diagnose your setup
-Iniciar-TunnelAI.cmd -Ruta C:\Proyectos\MiApp    # non-interactive launch
-Iniciar-TunnelAI.cmd -MaxMinutos 30              # auto-close the tunnel after 30 min
-Agregar-Skill.cmd todas                          # install all 15 skills
+Agregar-Skill.cmd todas                          # install all 15 skills manually
 ```
+
+## One menu for everything
+
+`TunnelAI.cmd` is the single entry point: pick an option and it creates that session for you.
+
+| Option | Assistant | Tunnel | Port |
+|---|---|---|---|
+| 1 | ChatGPT | Cloudflare quick tunnel (new URL each run) | 3001 |
+| 2 | Gemini web/mobile | Tailscale Funnel (stable URL, streams SSE) | 3001 |
+| 3 | Claude | Cloudflare quick tunnel (new URL each run) | 3002 |
+| 4 | Antigravity | none — local `127.0.0.1` | 3003 |
+| 5 | Antigravity on another machine | shared public tunnel + Bearer | 3001 |
+| 6 | — | verify the environment | — |
+| 7 | — | stop everything (ports, tunnels, funnel, sentinel) | — |
+
+Before opening the tunnel it installs the **15 skills** into the exposed folder (toggle with `s`),
+so the AI reads `TUNNELAI-SKILL-*.md` through that same tunnel. The individual launchers
+(`Iniciar-TunnelAI.cmd`, `Iniciar-Gemini.cmd`, …) still work if you prefer to skip the menu.
 
 ## Using each assistant
 
@@ -172,7 +194,7 @@ Verified end-to-end: without the token the public URL answers **401**; with `Aut
 
 ## Skills for the AI (15 ready-to-use roles)
 
-`Agregar-Skill.cmd` installs a **role** into the exposed folder that the AI reads by itself (it shows up via `list_files`), and copies the text to your clipboard:
+`TunnelAI.cmd` installs all 15 automatically before opening the tunnel (toggle with `s`). By hand, `Agregar-Skill.cmd` installs a **role** into the exposed folder that the AI reads by itself (it shows up via `list_files`), and copies the text to your clipboard:
 
 | Skill | What it does |
 |---|---|

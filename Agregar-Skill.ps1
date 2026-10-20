@@ -18,7 +18,8 @@ param(
   [ValidateSet('auditoria','web','ocr','onboarding','seguridad','documentar','instalacion','migracion','rendimiento','accesibilidad','datos','testing','seo','informes','arquitectura','todas','ambas','')][string]$Skill = '',
   [string]$Ruta,
   [switch]$Listar,
-  [switch]$Quitar
+  [switch]$Quitar,
+  [switch]$Silencioso
 )
 
 $ErrorActionPreference = "Stop"
@@ -128,12 +129,16 @@ foreach ($k in $elegidos) {
   Write-Ok "$($info.Emoji) $($info.Titulo) installed -> $dst"
 
   # skill text to the clipboard to paste as connector instructions
-  try {
-    $txt = Get-Content -LiteralPath $src -Raw
-    Set-Clipboard -Value $txt
-    Write-Info "Skill text copied to clipboard (paste it into the connector Instructions if supported)"
-  } catch {}
+  if (-not $Silencioso) {
+    try {
+      $txt = Get-Content -LiteralPath $src -Raw
+      Set-Clipboard -Value $txt
+      Write-Info "Skill text copied to clipboard (paste it into the connector Instructions if supported)"
+    } catch {}
+  }
 }
+
+if ($Silencioso) { return }
 
 Write-Host ""
 Write-Host "── How to use it ─────────────────────────────────────────" -ForegroundColor Cyan

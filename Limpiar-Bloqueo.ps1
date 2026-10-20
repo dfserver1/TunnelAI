@@ -46,6 +46,16 @@ foreach ($v in $vig) {
   try { Stop-Process -Id $v.ProcessId -Force -ErrorAction SilentlyContinue } catch {}
 }
 
+# Tailscale Funnel (Gemini): turn it off only when it points at one of our ports
+$ts = Resolve-TunnelAiBin -Nombre tailscale
+if ($ts) {
+  $funnel = (& $ts funnel status 2>&1) -join ' '
+  if ($funnel -match 'Funnel on' -and $funnel -match '127\.0\.0\.1:300[123]') {
+    (& $ts funnel --https=443 off 2>&1) | Out-Null
+    Write-Host "  Tailscale Funnel closed" -ForegroundColor Yellow
+  }
+}
+
 if ($IncluirNodeDotnet) {
   Write-Warn "BRUTE MODE: this closes ALL node and dotnet processes in your session (may affect your work)."
   $ok = Read-Host "Type SI to continue"
